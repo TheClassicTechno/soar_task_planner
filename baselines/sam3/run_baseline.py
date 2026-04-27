@@ -65,6 +65,11 @@ def parse_args() -> argparse.Namespace:
         help="Limit number of images (useful for quick smoke tests)",
     )
     p.add_argument(
+        "--scene", default=None,
+        help="Restrict evaluation to a single scene (e.g. 'trail-5'). "
+             "Filters after loading the full split so splits remain canonical.",
+    )
+    p.add_argument(
         "--no_gt", action="store_true",
         help="Skip mIoU computation even if GT annotations exist",
     )
@@ -90,8 +95,13 @@ def run(args: argparse.Namespace) -> None:
         )
 
     print(f"\n[SAM3 Baseline] Loading RUGD {args.split} split from: {rugd_dir}")
-    samples = load_rugd_split(rugd_dir, split=args.split, max_samples=args.max_samples)
-    print(f"  Found {len(samples)} images")
+    samples = load_rugd_split(rugd_dir, split=args.split)
+    if args.scene:
+        samples = [s for s in samples if s.name.startswith(args.scene)]
+        print(f"  Filtered to scene '{args.scene}': {len(samples)} images")
+    if args.max_samples:
+        samples = samples[:args.max_samples]
+    print(f"  Evaluating {len(samples)} images")
 
     print(f"[SAM3 Baseline] Loading model (requires CUDA)...")
     model = SAM3Baseline(config_path=args.config)

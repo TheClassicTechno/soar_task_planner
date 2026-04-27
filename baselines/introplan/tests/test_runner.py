@@ -60,7 +60,7 @@ def _make_mock_llm(prediction="B", confidence=0.85):
 
 def test_load_scenarios_from_calibration_file():
     scenarios = load_scenarios_from_json(CALIBRATION_PATH)
-    assert len(scenarios) == 50
+    assert len(scenarios) == 57
     assert all(isinstance(s, NavigationScenario) for s in scenarios)
 
 
