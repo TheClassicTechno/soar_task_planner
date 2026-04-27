@@ -16,7 +16,7 @@ embedding lookup as described in the IntroPlan paper.
 import json
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 
 class KnowledgeBaseEntry:
@@ -31,6 +31,7 @@ class KnowledgeBaseEntry:
         options: Dict[str, str],
         correct_option: str,
         reasoning: str,
+        source_image: Optional[str] = None,
     ):
         self.entry_id = entry_id
         self.instruction = instruction
@@ -39,6 +40,12 @@ class KnowledgeBaseEntry:
         self.options = options
         self.correct_option = correct_option
         self.reasoning = reasoning
+        # None = synthetic hand-crafted entry; filename = RUGD-derived entry
+        self.source_image: Optional[str] = source_image
+
+    def is_rugd_grounded(self) -> bool:
+        """Returns True if this entry was generated from a real RUGD image."""
+        return self.source_image is not None
 
     def to_dict(self) -> Dict:
         return {
@@ -49,6 +56,7 @@ class KnowledgeBaseEntry:
             "options": self.options,
             "correct_option": self.correct_option,
             "reasoning": self.reasoning,
+            "source_image": self.source_image,
         }
 
     @classmethod
@@ -61,6 +69,7 @@ class KnowledgeBaseEntry:
             options=d["options"],
             correct_option=d["correct_option"],
             reasoning=d["reasoning"],
+            source_image=d.get("source_image"),  # graceful: absent key → None
         )
 
     def retrieval_text(self) -> str:
@@ -133,6 +142,14 @@ class NavigationKnowledgeBase:
         """Convenience wrapper returning dicts (for prompt formatting)."""
         entries = self.retrieve(instruction, terrain_description, top_k, same_uncertainty_type)
         return [e.to_dict() for e in entries]
+
+    def rugd_grounded_count(self) -> int:
+        """Number of entries backed by a real RUGD image."""
+        return sum(1 for e in self._entries if e.is_rugd_grounded())
+
+    def synthetic_count(self) -> int:
+        """Number of hand-crafted synthetic entries (no RUGD image)."""
+        return sum(1 for e in self._entries if not e.is_rugd_grounded())
 
     def save(self, path: str) -> None:
         """Serialize the KB to a JSON file."""

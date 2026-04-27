@@ -144,11 +144,19 @@ Be specific and concise. One line per feature."""
 
 # ── Helper functions ──────────────────────────────────────────────────────────
 
+# Type taxonomy agreed in April 2025 meeting.
+# Type 2 covers first-time terrain encounters (preference unknown);
+# Type 4 covers mild terrain where preference is unlikely to matter but is still
+# unrecorded.  The meeting discussed folding Type 4 into Type 2 — keep separate
+# for now to allow baseline ablation, but treat them similarly in prompts.
+# Type 3 (safety) requires autonomous action with NO user consultation.
+# Location / building destination uncertainty was deprioritized because RUGD
+# images do not contain campus buildings; use terrain-movement instructions instead.
 UNCERTAINTY_TYPE_LABELS = {
-    1: "Type 1 (instructional ambiguity — user command is unclear)",
-    2: "Type 2 (environmental uncertainty — terrain seen, user preference unknown)",
-    3: "Type 3 (safety critical — immediate hazard, act conservatively)",
-    4: "Type 4 (preference unknown — user has never stated preference for this terrain)",
+    1: "Type 1 (instructional ambiguity — user command is vague, incomplete, or has no clear referent)",
+    2: "Type 2 (terrain/environmental uncertainty — robot sees a terrain feature; user preference or safety tolerance for that terrain is unknown)",
+    3: "Type 3 (safety critical — immediate hazard detected; robot must act conservatively without asking)",
+    4: "Type 4 (system/perception error — robot sensor, localization, or planning subsystem is unreliable; robot must stop or alert user before acting)",
 }
 
 
