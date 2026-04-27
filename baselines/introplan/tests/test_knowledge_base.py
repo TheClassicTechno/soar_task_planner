@@ -187,7 +187,7 @@ def test_kb_retrieve_as_dicts_returns_dicts():
 
 def test_calibration_data_loads_correctly():
     kb = NavigationKnowledgeBase.from_json(CALIBRATION_DATA_PATH)
-    assert len(kb) == 50
+    assert len(kb) == 57
 
 
 def test_calibration_data_all_entries_valid():
