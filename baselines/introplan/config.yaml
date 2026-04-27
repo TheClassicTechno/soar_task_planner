@@ -1,8 +1,8 @@
 # IntroPlan Navigation Baseline Configuration
 
 llm:
-  api_type: "openai"          # "openai" (uses OPENAI_API_KEY) or "anthropic" (uses ANTHROPIC_API_KEY)
-  model: "gpt-4o"
+  api_type: "openai"
+  model: "gpt-4o-mini"
   max_tokens: 1024
   temperature: 0.0            # Deterministic for reproducible baselines
 

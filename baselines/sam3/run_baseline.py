@@ -17,7 +17,7 @@ Requirements:
     - CUDA GPU
     - SAM3 checkpoint downloaded (see scripts/download_sam3_checkpoint.sh)
     - RUGD dataset downloaded (see scripts/download_rugd.py)
-    - pip install -r baselines/requirements.txt
+    - pip install -r requirements.txt  # or conda env create -f environment.yaml
     - .env file with ANTHROPIC_API_KEY, NAV_STACK_PATH, etc.
 """
 

@@ -25,7 +25,7 @@ Usage:
 
 Requirements:
     - ANTHROPIC_API_KEY set in .env
-    - pip install -r baselines/requirements.txt
+    - pip install -r requirements.txt  # or conda env create -f environment.yaml
 """
 
 import argparse
@@ -35,6 +35,7 @@ from pathlib import Path
 
 import yaml
 from dotenv import load_dotenv
+from tqdm import tqdm
 
 from baselines.introplan.conformal_predictor import ConformalPredictor
 from baselines.introplan.llm_interface import LLMInterface
@@ -119,7 +120,9 @@ def run(args: argparse.Namespace) -> None:
         print(f"  Calibration scenarios : {len(calib_scenarios)}")
         print(f"  Target coverage       : {(1 - config.get('conformal', {}).get('alpha', 0.15))*100:.0f}%")
 
-        tau = runner.calibrate(calib_scenarios)
+        for scenario in tqdm(calib_scenarios, desc="Calibrating", unit="scenario"):
+            runner.calibrate([scenario])
+        tau = runner._predictor.calibrate()
         print(f"  Computed tau          : {tau:.4f}")
 
         if config.get("output", {}).get("save_predictor", True):
@@ -135,7 +138,7 @@ def run(args: argparse.Namespace) -> None:
     from baselines.introplan.metrics import MetricsCalculator, ScenarioResult
 
     calc = MetricsCalculator()
-    for scenario in test_scenarios:
+    for scenario in tqdm(test_scenarios, desc="Evaluating", unit="scenario"):
         decision = runner.run_scenario(scenario)
         result = ScenarioResult(
             scenario_id=scenario.scenario_id,
