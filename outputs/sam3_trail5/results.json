@@ -1,0 +1,342 @@
+{
+  "summary": {
+    "n_images": 50,
+    "mean_iou": 0.10792502262261287,
+    "per_class_iou": {
+      "sidewalk": 0.0,
+      "crosswalk": 0.0,
+      "road": 0.0,
+      "dirt": 0.0,
+      "vegetation": 0.6726596648804818,
+      "grass": 0.525956470913808,
+      "gravel": 0.2044091582996774,
+      "puddle": 0.0,
+      "wet surface": 0.0,
+      "cracked pavement": 0.0,
+      "curb": 0.0,
+      "mud": 0.0,
+      "slope": 0.0
+    },
+    "mean_coverage": 0.8092791754756871,
+    "mean_fps": 0.020040901032982856,
+    "split": "val",
+    "n_queries": 13,
+    "queries": [
+      "sidewalk",
+      "crosswalk",
+      "road",
+      "dirt",
+      "vegetation",
+      "grass",
+      "gravel",
+      "puddle",
+      "wet surface",
+      "cracked pavement",
+      "curb",
+      "mud",
+      "slope"
+    ]
+  },
+  "per_image": [
+    {
+      "name": "trail-5_00001",
+      "inference_time_s": 53.61588254198432,
+      "n_detections": 3,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00006",
+      "inference_time_s": 52.952864250168204,
+      "n_detections": 3,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00011",
+      "inference_time_s": 54.43015958368778,
+      "n_detections": 2,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00016",
+      "inference_time_s": 49.39328991714865,
+      "n_detections": 3,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00021",
+      "inference_time_s": 51.27965974994004,
+      "n_detections": 5,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00026",
+      "inference_time_s": 49.9588292920962,
+      "n_detections": 5,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00031",
+      "inference_time_s": 50.791253875009716,
+      "n_detections": 5,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00036",
+      "inference_time_s": 49.975814250297844,
+      "n_detections": 5,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00041",
+      "inference_time_s": 50.22352358326316,
+      "n_detections": 3,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00046",
+      "inference_time_s": 48.955356125719845,
+      "n_detections": 5,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00051",
+      "inference_time_s": 49.30265154223889,
+      "n_detections": 4,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00056",
+      "inference_time_s": 49.931134041398764,
+      "n_detections": 4,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00061",
+      "inference_time_s": 51.01893320865929,
+      "n_detections": 5,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00066",
+      "inference_time_s": 49.988740207627416,
+      "n_detections": 4,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00071",
+      "inference_time_s": 49.14317920990288,
+      "n_detections": 3,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00076",
+      "inference_time_s": 49.63250283244997,
+      "n_detections": 6,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00081",
+      "inference_time_s": 49.03027062583715,
+      "n_detections": 5,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00086",
+      "inference_time_s": 49.09311612416059,
+      "n_detections": 6,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00091",
+      "inference_time_s": 49.15966804232448,
+      "n_detections": 6,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00096",
+      "inference_time_s": 48.978595667518675,
+      "n_detections": 4,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00101",
+      "inference_time_s": 50.114946499466896,
+      "n_detections": 4,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00106",
+      "inference_time_s": 48.185507542453706,
+      "n_detections": 3,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00111",
+      "inference_time_s": 50.158951374702156,
+      "n_detections": 3,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00116",
+      "inference_time_s": 48.962559334002435,
+      "n_detections": 2,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00121",
+      "inference_time_s": 53.58226770721376,
+      "n_detections": 5,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00126",
+      "inference_time_s": 48.90340066701174,
+      "n_detections": 4,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00131",
+      "inference_time_s": 49.02640091534704,
+      "n_detections": 5,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00136",
+      "inference_time_s": 50.01008620951325,
+      "n_detections": 6,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00141",
+      "inference_time_s": 50.815991249866784,
+      "n_detections": 4,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00146",
+      "inference_time_s": 48.932838667184114,
+      "n_detections": 5,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00151",
+      "inference_time_s": 49.059005208313465,
+      "n_detections": 4,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00156",
+      "inference_time_s": 48.215602500364184,
+      "n_detections": 4,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00161",
+      "inference_time_s": 50.0229913322255,
+      "n_detections": 5,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00166",
+      "inference_time_s": 49.26456679124385,
+      "n_detections": 3,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00171",
+      "inference_time_s": 49.85074845794588,
+      "n_detections": 4,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00176",
+      "inference_time_s": 49.50370237510651,
+      "n_detections": 4,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00181",
+      "inference_time_s": 49.27698433306068,
+      "n_detections": 3,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00186",
+      "inference_time_s": 49.38842183351517,
+      "n_detections": 5,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00191",
+      "inference_time_s": 49.68069154210389,
+      "n_detections": 4,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00196",
+      "inference_time_s": 48.963146791793406,
+      "n_detections": 6,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00201",
+      "inference_time_s": 50.84374075010419,
+      "n_detections": 6,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00206",
+      "inference_time_s": 50.34504754189402,
+      "n_detections": 5,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00211",
+      "inference_time_s": 49.94551704172045,
+      "n_detections": 4,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00216",
+      "inference_time_s": 49.22117670811713,
+      "n_detections": 5,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00221",
+      "inference_time_s": 49.17430979106575,
+      "n_detections": 3,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00226",
+      "inference_time_s": 48.40284370817244,
+      "n_detections": 3,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00231",
+      "inference_time_s": 50.25338875036687,
+      "n_detections": 4,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00236",
+      "inference_time_s": 49.235897125676274,
+      "n_detections": 5,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00241",
+      "inference_time_s": 48.9992846660316,
+      "n_detections": 4,
+      "has_gt": true
+    },
+    {
+      "name": "trail-5_00246",
+      "inference_time_s": 49.70236304216087,
+      "n_detections": 4,
+      "has_gt": true
+    }
+  ]
+}
