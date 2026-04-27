@@ -44,7 +44,7 @@ from baselines.sam3.data_loader import RUGDSample, load_rugd_split
 # correct robot response given the terrain observation.
 
 INSTRUCTION_TEMPLATES: Dict[int, List[str]] = {
-    1: [  # Instructional ambiguity
+    1: [  # Instructional ambiguity — vague reference or unclear destination
         "Go that way",
         "Take me there",
         "Continue like before",
@@ -53,16 +53,18 @@ INSTRUCTION_TEMPLATES: Dict[int, List[str]] = {
         "Take me the usual way",
         "Go to the place we talked about",
     ],
-    2: [  # Environmental uncertainty (terrain seen, preference unknown)
-        "Take me to the main building",
-        "Lead me to the parking lot",
-        "Take me to the library",
-        "Let's go to the sports field",
-        "Take me to the cafeteria",
-        "Go to the engineering quad",
-        "Head toward the gym",
+    2: [  # Environmental uncertainty — terrain seen, user preference unknown.
+        # Use movement commands so the scenario is consistent with RUGD terrain images,
+        # which show outdoor terrain rather than named buildings or destinations.
+        "Keep going",
+        "Continue forward",
+        "Go straight",
+        "Move ahead",
+        "Don't slow down",
+        "Take the shortcut",
+        "Keep moving",
     ],
-    3: [  # Safety critical
+    3: [  # Safety critical — immediate hazard, robot must act conservatively
         "Keep going straight",
         "Don't slow down",
         "Just move forward",
@@ -70,14 +72,9 @@ INSTRUCTION_TEMPLATES: Dict[int, List[str]] = {
         "Ignore the detour signs",
         "Hurry up, just go",
     ],
-    4: [  # Preference unknown
-        "Take the fastest route",
-        "I'm in a hurry, just go",
-        "Whatever route is fine",
-        "You choose the path",
-        "Go however you want",
-        "Take me any way you like",
-    ],
+    # Type 4 (system/perception error) is NOT generated from RUGD images —
+    # RUGD captures terrain, not robot system state. Type 4 entries must be
+    # hand-crafted. See nav_calibration.json entries nav_051–nav_058.
 }
 
 
@@ -204,10 +201,16 @@ def main() -> None:
     if not rugd_dir:
         raise ValueError("Provide --rugd_dir or set RUGD_DATA_PATH in .env")
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise ValueError("Set ANTHROPIC_API_KEY in your .env file")
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if anthropic_key:
+        api_key, api_type, model = anthropic_key, "anthropic", "claude-sonnet-4-6"
+    elif openai_key:
+        api_key, api_type, model = openai_key, "openai", "gpt-4o"
+    else:
+        raise ValueError("Set ANTHROPIC_API_KEY or OPENAI_API_KEY in your .env file")
 
+    print(f"Using {api_type} ({model})")
     print(f"Loading RUGD {args.split} split from: {rugd_dir}")
     all_samples = load_rugd_split(rugd_dir, split=args.split)
 
@@ -216,11 +219,12 @@ def main() -> None:
     samples = all_samples[::step][: args.n_images]
     print(f"Processing {len(samples)} images (sampled from {len(all_samples)} total)")
 
-    llm = LLMInterface(api_key=api_key)
+    llm = LLMInterface(api_key=api_key, api_type=api_type, model=model)
     scenarios = []
 
-    # Cycle through uncertainty types so all 4 types are represented
-    uncertainty_types = [1, 2, 3, 4]
+    # Cycle through types 1/2/3 only — Type 4 (system error) cannot be
+    # derived from RUGD images and must remain hand-crafted.
+    uncertainty_types = [1, 2, 3]
 
     for idx, sample in enumerate(tqdm(samples, desc="Generating scenarios")):
         utype = uncertainty_types[idx % len(uncertainty_types)]
@@ -244,7 +248,7 @@ def main() -> None:
     print(f"\nUncertainty type distribution: {dict(type_counts)}")
     print(f"Correct option distribution:   {dict(option_counts)}")
     print(f"\nSaved to: {out_path}")
-    print(f"Total Claude API calls: {llm.total_calls}")
+    print(f"Total {api_type} API calls: {llm.total_calls}")
 
 
 if __name__ == "__main__":
