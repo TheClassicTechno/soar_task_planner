@@ -44,7 +44,21 @@ def main() -> None:
             "Run: pip install dataset-tools"
         )
 
-    dtools.download(dataset="RUGD", dst_dir=str(out), log_level="info")
+    dtools.download(dataset="RUGD", dst_dir=str(out))
+
+    # Handle nested folder structure - move contents up
+    inner_rugd = out / "rugd"
+    if inner_rugd.exists():
+        import shutil
+        for item in inner_rugd.iterdir():
+            dest = out / item.name
+            if dest.exists():
+                if dest.is_dir():
+                    shutil.rmtree(dest)
+                else:
+                    dest.unlink()
+            shutil.move(str(item), str(dest))
+        inner_rugd.rmdir()  # Remove empty rugd folder
 
     # Verify
     splits = ["train", "val", "test"]
@@ -53,7 +67,7 @@ def main() -> None:
         img_dir = out / split / "img"
         ann_dir = out / split / "ann"
         n_img = len(list(img_dir.glob("*.png"))) if img_dir.exists() else 0
-        n_ann = len(list(ann_dir.glob("*.png"))) if ann_dir.exists() else 0
+        n_ann = len(list(ann_dir.glob("*.json"))) if ann_dir.exists() else 0
         print(f"  {split}: {n_img} images, {n_ann} annotations")
 
     print(f"\nSet RUGD_DATA_PATH={out} in your .env file.")
