@@ -34,6 +34,7 @@ REQUIRED_FIELDS = {
     "correct_option",
     "reasoning",
     "source_image",
+    "should_ask",  # True iff the robot should ask the user (correct_option == "B")
 }
 
 VALID_OPTIONS = {"A", "B", "C", "D"}
@@ -268,3 +269,64 @@ class TestDatasetComposition:
         test_ids = {e["entry_id"] for e in test_entries}
         overlap = cal_ids & test_ids
         assert not overlap, f"entry_ids appear in both calibration and test: {overlap}"
+
+
+# ── should_ask field tests ────────────────────────────────────────────────────
+
+class TestShouldAskField:
+    """
+    The should_ask field marks whether the robot should ask the user for
+    clarification (True) or act autonomously without asking (False).
+
+    Contract: should_ask is True exactly when correct_option is "B".
+    Option B is the only ask-the-user action; options A/C/D are all
+    autonomous actions.  This invariant is enforced here so that the FPR
+    metric (false positive = robot asked when should_ask is False) is
+    always meaningful.
+    """
+
+    def test_should_ask_is_boolean_in_calibration(self, calibration_entries):
+        """Every calibration entry must have should_ask as a Python bool."""
+        for entry in calibration_entries:
+            val = entry.get("should_ask")
+            assert isinstance(val, bool), (
+                f"Entry {entry['entry_id']}: should_ask must be bool, got {type(val).__name__}"
+            )
+
+    def test_should_ask_is_boolean_in_test(self, test_entries):
+        """Every test entry must have should_ask as a Python bool."""
+        for entry in test_entries:
+            val = entry.get("should_ask")
+            assert isinstance(val, bool), (
+                f"Entry {entry['entry_id']}: should_ask must be bool, got {type(val).__name__}"
+            )
+
+    def test_should_ask_true_iff_correct_option_is_b(self, all_entries):
+        """should_ask must be True exactly when correct_option is B (ask user).
+
+        This is the core invariant: option B is the sole ask-the-user action.
+        If should_ask and correct_option diverge, either the data was hand-edited
+        incorrectly or the field was not updated after changing correct_option.
+        """
+        violations = [
+            f"{e['entry_id']}: should_ask={e['should_ask']} but correct_option={e['correct_option']!r}"
+            for e in all_entries
+            if e["should_ask"] != (e["correct_option"] == "B")
+        ]
+        assert not violations, (
+            "should_ask must equal (correct_option == 'B') for every entry.\n"
+            "Violations:\n" + "\n".join(f"  {v}" for v in violations)
+        )
+
+    def test_test_set_has_option_a_correct_entries(self, test_entries):
+        """Test set must contain at least one entry where A (proceed directly) is correct.
+
+        Without any correct_option='A' entries, FPR (false positive rate) is
+        trivially 0 regardless of how often the robot over-asks.  At least one
+        proceed-directly entry is required for the metric to be meaningful.
+        """
+        a_entries = [e for e in test_entries if e["correct_option"] == "A"]
+        assert len(a_entries) >= 1, (
+            "Test set has no entries with correct_option='A'. "
+            "Add at least one no-uncertainty scenario so FPR is measurable."
+        )
