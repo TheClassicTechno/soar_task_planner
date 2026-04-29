@@ -108,9 +108,9 @@ Using the examples above as guidance, reason through each option step by step.
 Then predict which single option is most appropriate.
 
 Consider:
-- Is this terrain safe to traverse without asking? (Type 3 = always ask or act conservatively)
-- Does the user have an expressed preference for this terrain type? (Type 4 = ask if unknown)
-- Is the instruction itself unclear? (Type 1 = ask for clarification)
+- Is this terrain safe to traverse without asking? (Type 3 = act conservatively — never ask for permission on a safety hazard)
+- Is the robot's own sensor/system state reliable? (Type 4 = stop or alert user if system/sensor error, do not proceed blindly)
+- Is the instruction itself unclear? (Type 1 = ask for clarification before moving)
 - Would rerouting or slowing down resolve the uncertainty without bothering the user?
 
 Respond in this exact JSON format:
@@ -144,14 +144,13 @@ Be specific and concise. One line per feature."""
 
 # ── Helper functions ──────────────────────────────────────────────────────────
 
-# Type taxonomy agreed in April 2025 meeting.
-# Type 2 covers first-time terrain encounters (preference unknown);
-# Type 4 covers mild terrain where preference is unlikely to matter but is still
-# unrecorded.  The meeting discussed folding Type 4 into Type 2 — keep separate
-# for now to allow baseline ablation, but treat them similarly in prompts.
-# Type 3 (safety) requires autonomous action with NO user consultation.
-# Location / building destination uncertainty was deprioritized because RUGD
-# images do not contain campus buildings; use terrain-movement instructions instead.
+# Type taxonomy finalized April 2026 (see project_type_taxonomy.md).
+# Type 1: instructional ambiguity — user command vague or incomplete.
+# Type 2: terrain/environmental — robot sees terrain; user preference unknown.
+# Type 3: safety critical — immediate hazard; robot must act autonomously, never ask.
+# Type 4: system/perception error — sensor, localization, or planner unreliable;
+#         robot must stop or alert user before acting.
+# Type 4 entries cannot be auto-generated from RUGD images (terrain ≠ system state).
 UNCERTAINTY_TYPE_LABELS = {
     1: "Type 1 (instructional ambiguity — user command is vague, incomplete, or has no clear referent)",
     2: "Type 2 (terrain/environmental uncertainty — robot sees a terrain feature; user preference or safety tolerance for that terrain is unknown)",
