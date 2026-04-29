@@ -7,7 +7,7 @@ KnowNo (Ren et al., CoRL 2023), adapted to our navigation uncertainty setting.
 Definitions (per scenario):
   - Correct prediction: robot's chosen option == ground-truth correct option
   - Human Help (HR):   robot decided to ASK (prediction set size > 1)
-  - False Positive:    robot ASKed when the correct option was A (always-act would work)
+  - False Positive:    robot ASKed when the correct option was NOT B (autonomous action was right)
   - Exact Set:         prediction set == {correct option} exactly
 
 Primary metrics:
@@ -74,8 +74,14 @@ class ScenarioResult:
 
     @property
     def false_positive(self) -> bool:
-        """Robot asked when the correct option was A (proceeding was the right call)."""
-        return self.asked_human and self.correct_option == "A"
+        """Robot asked when it should have acted autonomously without consulting the user.
+
+        Option B is the only action that involves asking the user.  Options A
+        (proceed), C (reroute), and D (slow down) are all autonomous acts.
+        If the robot triggers a human-help request when the correct answer was
+        any of those, it over-asked — that is a false positive.
+        """
+        return self.asked_human and self.correct_option != "B"
 
 
 class MetricsCalculator:
@@ -111,7 +117,7 @@ class MetricsCalculator:
         return sum(r.asked_human for r in self._results) / len(self._results)
 
     def false_positive_rate(self) -> float:
-        """FPR: fraction of questions asked when the robot could have acted (option A was correct)."""
+        """FPR: fraction of questions asked when the robot should have acted autonomously (correct option was not B)."""
         questions = [r for r in self._results if r.asked_human]
         if not questions:
             return 0.0

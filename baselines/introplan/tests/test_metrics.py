@@ -68,17 +68,32 @@ def test_result_not_noncompliant_when_set_is_correct_only():
     assert r.noncompliant is False
 
 
-def test_result_false_positive_when_asked_and_correct_was_act():
+def test_result_false_positive_when_asked_and_correct_was_proceed():
+    # Option A (proceed) is an autonomous act — asking instead is a false positive.
     r = _make_result("A", ["A", "B"], decision="ASK")
     assert r.false_positive is True
 
 
-def test_result_not_false_positive_when_asked_and_correct_was_not_act():
+def test_result_false_positive_when_asked_and_correct_was_reroute():
+    # Option C (reroute automatically) is an autonomous act — asking instead is a false positive.
+    r = _make_result("C", ["B", "C"], decision="ASK")
+    assert r.false_positive is True
+
+
+def test_result_false_positive_when_asked_and_correct_was_slowdown():
+    # Option D (slow down) is an autonomous act — asking instead is a false positive.
+    r = _make_result("D", ["B", "D"], decision="ASK")
+    assert r.false_positive is True
+
+
+def test_result_not_false_positive_when_asked_and_correct_was_ask():
+    # Option B means the robot should ask — asking is the right call, not a false positive.
     r = _make_result("B", ["A", "B"], decision="ASK")
     assert r.false_positive is False
 
 
 def test_result_not_false_positive_when_did_not_ask():
+    # Robot acted directly and was correct — no ask, no false positive.
     r = _make_result("A", ["A"], decision="A")
     assert r.false_positive is False
 
