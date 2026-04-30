@@ -1,0 +1,19 @@
+# KnowNo Navigation Baseline Configuration
+#
+# KnowNo uses direct LLM scoring (no retrieval) with conformal prediction.
+# Same alpha and LLM settings as IntroPlan for a fair comparison.
+
+llm:
+  api_type: "openai"
+  model: "gpt-4o-mini"
+  max_tokens: 512       # Shorter than IntroPlan — no reasoning chain, just predict
+  temperature: 0.0      # Deterministic for reproducible baselines
+
+conformal:
+  alpha: 0.15           # Same as IntroPlan: target success rate = 85%
+  # tau is computed at runtime during calibrate()
+
+output:
+  save_dir: "outputs/knowno_baseline"
+  save_decisions: true
+  save_predictor: true
