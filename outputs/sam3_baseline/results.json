@@ -18,7 +18,7 @@
       "slope": 0.0
     },
     "mean_coverage": 0.6512651162790697,
-    "mean_fps": 0.017091262342373716,
+    "mean_fps": 0.02053196167379468,
     "split": "val",
     "n_queries": 13,
     "queries": [
@@ -40,301 +40,301 @@
   "per_image": [
     {
       "name": "park-1_00001",
-      "inference_time_s": 56.64070058334619,
+      "inference_time_s": 50.2461220840014,
       "n_detections": 10,
       "has_gt": true
     },
     {
       "name": "park-1_00006",
-      "inference_time_s": 61.845007750205696,
+      "inference_time_s": 48.892894292001074,
       "n_detections": 10,
       "has_gt": true
     },
     {
       "name": "park-1_00011",
-      "inference_time_s": 52.42582204192877,
+      "inference_time_s": 48.429483334000906,
       "n_detections": 10,
       "has_gt": true
     },
     {
       "name": "park-1_00016",
-      "inference_time_s": 54.91325241699815,
+      "inference_time_s": 47.8630179160009,
       "n_detections": 10,
       "has_gt": true
     },
     {
       "name": "park-1_00021",
-      "inference_time_s": 53.476470874622464,
+      "inference_time_s": 49.41929533399889,
       "n_detections": 8,
       "has_gt": true
     },
     {
       "name": "park-1_00026",
-      "inference_time_s": 50.42180091608316,
+      "inference_time_s": 49.188978333000705,
       "n_detections": 10,
       "has_gt": true
     },
     {
       "name": "park-1_00031",
-      "inference_time_s": 51.918217916972935,
+      "inference_time_s": 48.94905595899945,
       "n_detections": 10,
       "has_gt": true
     },
     {
       "name": "park-1_00036",
-      "inference_time_s": 51.10279383417219,
+      "inference_time_s": 49.47176737500013,
       "n_detections": 9,
       "has_gt": true
     },
     {
       "name": "park-1_00041",
-      "inference_time_s": 52.00486308336258,
+      "inference_time_s": 48.86592308300169,
       "n_detections": 10,
       "has_gt": true
     },
     {
       "name": "park-1_00046",
-      "inference_time_s": 51.43501808401197,
+      "inference_time_s": 49.486408292001215,
       "n_detections": 8,
       "has_gt": true
     },
     {
       "name": "park-1_00051",
-      "inference_time_s": 49.89328945800662,
+      "inference_time_s": 48.499458250000316,
       "n_detections": 7,
       "has_gt": true
     },
     {
       "name": "park-1_00056",
-      "inference_time_s": 51.60099733341485,
+      "inference_time_s": 48.58229949999986,
       "n_detections": 6,
       "has_gt": true
     },
     {
       "name": "park-1_00061",
-      "inference_time_s": 50.105068874545395,
+      "inference_time_s": 49.67339329200149,
       "n_detections": 7,
       "has_gt": true
     },
     {
       "name": "park-1_00066",
-      "inference_time_s": 51.22925337497145,
+      "inference_time_s": 49.03888299999926,
       "n_detections": 7,
       "has_gt": true
     },
     {
       "name": "park-1_00071",
-      "inference_time_s": 49.47630162443966,
+      "inference_time_s": 48.75394299999971,
       "n_detections": 6,
       "has_gt": true
     },
     {
       "name": "park-1_00076",
-      "inference_time_s": 50.189602207392454,
+      "inference_time_s": 50.02257145900148,
       "n_detections": 8,
       "has_gt": true
     },
     {
       "name": "park-1_00081",
-      "inference_time_s": 49.49162187427282,
+      "inference_time_s": 48.35129695900105,
       "n_detections": 8,
       "has_gt": true
     },
     {
       "name": "park-1_00086",
-      "inference_time_s": 48.6791606657207,
+      "inference_time_s": 48.3480259579992,
       "n_detections": 9,
       "has_gt": true
     },
     {
       "name": "park-1_00091",
-      "inference_time_s": 48.27736345957965,
+      "inference_time_s": 48.544597582998904,
       "n_detections": 11,
       "has_gt": true
     },
     {
       "name": "park-1_00096",
-      "inference_time_s": 48.745087708346546,
+      "inference_time_s": 48.89455037500011,
       "n_detections": 10,
       "has_gt": true
     },
     {
       "name": "park-1_00101",
-      "inference_time_s": 49.82649358455092,
+      "inference_time_s": 49.33034637499986,
       "n_detections": 9,
       "has_gt": true
     },
     {
       "name": "park-1_00106",
-      "inference_time_s": 59.79763187468052,
+      "inference_time_s": 48.136761957999624,
       "n_detections": 9,
       "has_gt": true
     },
     {
       "name": "park-1_00111",
-      "inference_time_s": 51.545373166911304,
+      "inference_time_s": 47.76001120799992,
       "n_detections": 7,
       "has_gt": true
     },
     {
       "name": "park-1_00116",
-      "inference_time_s": 50.97486454248428,
+      "inference_time_s": 50.535527,
       "n_detections": 7,
       "has_gt": true
     },
     {
       "name": "park-1_00121",
-      "inference_time_s": 53.17818808276206,
+      "inference_time_s": 48.26395212499847,
       "n_detections": 5,
       "has_gt": true
     },
     {
       "name": "park-1_00126",
-      "inference_time_s": 51.587922375649214,
+      "inference_time_s": 48.50983274999999,
       "n_detections": 5,
       "has_gt": true
     },
     {
       "name": "park-1_00131",
-      "inference_time_s": 51.27204412501305,
+      "inference_time_s": 48.08867845799978,
       "n_detections": 6,
       "has_gt": true
     },
     {
       "name": "park-1_00136",
-      "inference_time_s": 51.81155883334577,
+      "inference_time_s": 48.247730708000745,
       "n_detections": 8,
       "has_gt": true
     },
     {
       "name": "park-1_00141",
-      "inference_time_s": 53.24060479179025,
+      "inference_time_s": 49.53210116699847,
       "n_detections": 9,
       "has_gt": true
     },
     {
       "name": "park-1_00146",
-      "inference_time_s": 52.00626662466675,
+      "inference_time_s": 48.46442674999889,
       "n_detections": 7,
       "has_gt": true
     },
     {
       "name": "park-1_00151",
-      "inference_time_s": 54.78832183312625,
+      "inference_time_s": 48.44423774999996,
       "n_detections": 8,
       "has_gt": true
     },
     {
       "name": "park-1_00156",
-      "inference_time_s": 55.877045958302915,
+      "inference_time_s": 48.72178770899882,
       "n_detections": 7,
       "has_gt": true
     },
     {
       "name": "park-1_00161",
-      "inference_time_s": 53.49505633395165,
+      "inference_time_s": 48.27212666699961,
       "n_detections": 5,
       "has_gt": true
     },
     {
       "name": "park-1_00166",
-      "inference_time_s": 52.63568262569606,
+      "inference_time_s": 48.26150820800103,
       "n_detections": 6,
       "has_gt": true
     },
     {
       "name": "park-1_00171",
-      "inference_time_s": 62.33548566605896,
+      "inference_time_s": 48.85503674999927,
       "n_detections": 5,
       "has_gt": true
     },
     {
       "name": "park-1_00176",
-      "inference_time_s": 63.925423917360604,
+      "inference_time_s": 48.09436541700052,
       "n_detections": 6,
       "has_gt": true
     },
     {
       "name": "park-1_00181",
-      "inference_time_s": 60.16075041517615,
+      "inference_time_s": 48.05146620800042,
       "n_detections": 6,
       "has_gt": true
     },
     {
       "name": "park-1_00186",
-      "inference_time_s": 52.72589295823127,
+      "inference_time_s": 48.25289024999984,
       "n_detections": 6,
       "has_gt": true
     },
     {
       "name": "park-1_00191",
-      "inference_time_s": 107.33931174967438,
+      "inference_time_s": 48.10074929199982,
       "n_detections": 6,
       "has_gt": true
     },
     {
       "name": "park-1_00196",
-      "inference_time_s": 69.1886019166559,
+      "inference_time_s": 48.094464290999895,
       "n_detections": 7,
       "has_gt": true
     },
     {
       "name": "park-1_00201",
-      "inference_time_s": 76.74923858232796,
+      "inference_time_s": 48.26914229199974,
       "n_detections": 6,
       "has_gt": true
     },
     {
       "name": "park-1_00206",
-      "inference_time_s": 79.71483762469143,
+      "inference_time_s": 49.684324333000404,
       "n_detections": 6,
       "has_gt": true
     },
     {
       "name": "park-1_00211",
-      "inference_time_s": 72.81922870874405,
+      "inference_time_s": 48.579317666999486,
       "n_detections": 6,
       "has_gt": true
     },
     {
       "name": "park-1_00216",
-      "inference_time_s": 75.26009054202586,
+      "inference_time_s": 48.33229125000071,
       "n_detections": 6,
       "has_gt": true
     },
     {
       "name": "park-1_00221",
-      "inference_time_s": 72.32660008314997,
+      "inference_time_s": 48.452417124999556,
       "n_detections": 6,
       "has_gt": true
     },
     {
       "name": "park-1_00226",
-      "inference_time_s": 75.96969174966216,
+      "inference_time_s": 48.65248904100008,
       "n_detections": 6,
       "has_gt": true
     },
     {
       "name": "park-1_00231",
-      "inference_time_s": 72.00246141664684,
+      "inference_time_s": 49.58522858300057,
       "n_detections": 8,
       "has_gt": true
     },
     {
       "name": "park-1_00236",
-      "inference_time_s": 65.24050770886242,
+      "inference_time_s": 48.056475583000065,
       "n_detections": 7,
       "has_gt": true
     },
     {
       "name": "park-1_00241",
-      "inference_time_s": 73.27184454165399,
+      "inference_time_s": 48.04765262500041,
       "n_detections": 6,
       "has_gt": true
     },
     {
       "name": "park-1_00246",
-      "inference_time_s": 70.53273199964315,
+      "inference_time_s": 48.02830725000058,
       "n_detections": 5,
       "has_gt": true
     }
