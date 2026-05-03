@@ -478,5 +478,37 @@
     "should_ask": false,
     "reasoning": "Faint decorative pavement markings on a clear wide plaza are a Type 2 benign environmental observation. The terrain is safe and unobstructed; the markings present no navigational hazard or unknown user preference. Proceeding without asking is the correct response.",
     "source_image": null
+  },
+  {
+    "entry_id": "nav_t031",
+    "instruction": "Move to it",
+    "terrain_description": "open paved area ahead with several distinct objects visible: a bench, a trash can, a bicycle rack, and a tree. Path is clear and safe. No terrain uncertainty.",
+    "uncertainty_type": 1,
+    "options": {
+      "A": "Proceed toward the nearest object (the bench) based on proximity",
+      "B": "Ask user: What should I move toward — I don’t have a referent for ‘it’. Do you mean the bench, the trash can, or the bicycle rack?",
+      "C": "Stop at current location and wait for a follow-up instruction",
+      "D": "Approach the center of the space slowly while awaiting clarification"
+    },
+    "correct_option": "B",
+    "should_ask": true,
+    "reasoning": "'Move to it' lacks a referent — 'it' refers to something never mentioned. The robot sees multiple objects and has no basis for inferring which one the user intends. This is a missing-object sub-type of instruction uncertainty.",
+    "source_image": null
+  },
+  {
+    "entry_id": "nav_t032",
+    "instruction": "The bench",
+    "terrain_description": "park bench visible 5 meters ahead on the left side of a clear concrete path. Path is flat, dry, and unobstructed.",
+    "uncertainty_type": 1,
+    "options": {
+      "A": "Navigate to the bench and stop directly in front of it",
+      "B": "Ask user: I see the bench ahead — should I go to it, stop beside it, wait there, or do something else with it?",
+      "C": "Slow approach toward bench while awaiting a verb or action from the user",
+      "D": "Continue past the bench without stopping"
+    },
+    "correct_option": "B",
+    "should_ask": true,
+    "reasoning": "'The bench' identifies an object but specifies no action. Valid interpretations include navigate to it, stop at it, face it, wait near it, or circle it. This is an ambiguous-action sub-type — the noun is clear, the intended verb is not.",
+    "source_image": null
   }
 ]
