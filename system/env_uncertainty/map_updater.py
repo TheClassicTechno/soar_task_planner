@@ -95,9 +95,15 @@ class MapUpdater:
                 is_traversable=is_traversable,
             )
 
+        # Read the prior traversability from the map before overwriting it.
+        # This feeds the Bayesian update in apply_user_feedback() so the
+        # posterior is conditioned on what the robot already believed.
+        prior = tmap.mean_score_over_mask(target_region.mask)
+
         new_tmap = tmap.apply_user_feedback(
             mask=target_region.mask,
             is_traversable=is_traversable,
+            prior_score=prior,
         )
         return UpdateResult(
             updated_map=new_tmap,
@@ -117,6 +123,8 @@ class MapUpdater:
 
         Used when the calling code already knows which region and answer to apply,
         e.g., after a structured UI interaction rather than free-text response.
+        Reads the current prior from the map so the Bayesian update is correctly
+        conditioned on existing knowledge.
 
         Args:
             region:         The specific RegionInfo to update.
@@ -126,7 +134,12 @@ class MapUpdater:
         Returns:
             Updated TraversabilityMap.
         """
-        return tmap.apply_user_feedback(mask=region.mask, is_traversable=is_traversable)
+        prior = tmap.mean_score_over_mask(region.mask)
+        return tmap.apply_user_feedback(
+            mask=region.mask,
+            is_traversable=is_traversable,
+            prior_score=prior,
+        )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

@@ -123,14 +123,16 @@ def test_feedback_traversable_sets_09():
     mask = np.zeros((10, 10), dtype=bool)
     mask[5:8, 5:8] = True
     updated = tmap.apply_user_feedback(mask, is_traversable=True)
-    assert updated.score_at(6, 6) == pytest.approx(0.9)
+    # Unknown prior (score 0.0 → treated as 0.5); Bayesian "safe" → ≈ 0.905
+    assert updated.score_at(6, 6) == pytest.approx(0.905, abs=0.001)
 
 
 def test_feedback_not_traversable_sets_00():
     tmap = TraversabilityMap.create(10, 10)
     mask = np.ones((10, 10), dtype=bool)
     updated = tmap.apply_user_feedback(mask, is_traversable=False)
-    assert np.all(updated.scores == 0.0)
+    # Unknown prior (score 0.0 → treated as 0.5); Bayesian "unsafe" → ≈ 0.053
+    assert np.all(updated.scores == pytest.approx(0.053, abs=0.001))
 
 
 # ── TraversabilityMap.score_at ────────────────────────────────────────────────
