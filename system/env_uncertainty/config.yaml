@@ -6,6 +6,10 @@ decision:
   ask_unknown_threshold: 0.10
   # Robot stops (does not even ask, just halts) when unknown_coverage >= this
   stop_unknown_threshold: 0.80
+  # Robot asks when any on-path scene-graph node has Dirichlet semantic entropy
+  # above this value.  Uniform entropy for K=20 classes is log(20)≈3.0;
+  # 1.5 corresponds to roughly equal probability spread across ~4-5 classes.
+  entropy_ask_threshold: 1.5
 
 # SAM3 + SAM2 detector settings
 detector:

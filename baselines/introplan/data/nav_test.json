@@ -13,7 +13,8 @@
     "correct_option": "B",
     "reasoning": "The instruction 'go there' has no referent \u2014 the robot has no basis for inferring which of the three paths the user intends. Asking for clarification is the only safe response to Type 1 instructional ambiguity.",
     "source_image": null,
-    "should_ask": true
+    "should_ask": true,
+    "ambiguity_subtype": "ambiguous_target"
   },
   {
     "entry_id": "nav_t002",
@@ -29,7 +30,8 @@
     "correct_option": "B",
     "reasoning": "Two equally plausible referents exist for 'that building.' The robot cannot disambiguate without more information. Asking which building is the minimal intervention needed to resolve Type 1 ambiguity.",
     "source_image": null,
-    "should_ask": true
+    "should_ask": true,
+    "ambiguity_subtype": "ambiguous_target"
   },
   {
     "entry_id": "nav_t003",
@@ -45,7 +47,8 @@
     "correct_option": "B",
     "reasoning": "'A bit' is vague and user-dependent. Some users mean 1 meter, others mean 10. Moving without clarification risks overshooting or undershooting. Asking resolves the Type 1 distance ambiguity safely.",
     "source_image": null,
-    "should_ask": true
+    "should_ask": true,
+    "ambiguity_subtype": "missing_distance"
   },
   {
     "entry_id": "nav_t004",
@@ -61,7 +64,8 @@
     "correct_option": "B",
     "reasoning": "'Here' specifies a location but not a direction. With a left/right choice available, arbitrarily picking one has a 50% chance of being wrong. Asking is the only reliable resolution to this Type 1 ambiguity.",
     "source_image": null,
-    "should_ask": true
+    "should_ask": true,
+    "ambiguity_subtype": "missing_direction"
   },
   {
     "entry_id": "nav_t005",
@@ -77,7 +81,8 @@
     "correct_option": "B",
     "reasoning": "No stored home location means any guess is purely speculative and likely wrong. The robot must ask the user to provide or confirm the destination rather than act on an unreliable proxy. Classic Type 1 missing referent.",
     "source_image": null,
-    "should_ask": true
+    "should_ask": true,
+    "ambiguity_subtype": "missing_object"
   },
   {
     "entry_id": "nav_t006",
@@ -397,7 +402,8 @@
     "correct_option": "A",
     "should_ask": false,
     "reasoning": "The instruction 'Go to the building on the left' is unambiguous \u2014 the left building is uniquely identified by its position and visible signage. There is no Type 1 ambiguity here; clarification would be unnecessary overhead when the referent is clear.",
-    "source_image": null
+    "source_image": null,
+    "ambiguity_subtype": "no_uncertainty"
   },
   {
     "entry_id": "nav_t026",
@@ -413,7 +419,8 @@
     "correct_option": "A",
     "should_ask": false,
     "reasoning": "The instruction 'Stop here' is clear, immediate, and location-specific \u2014 'here' refers unambiguously to the robot's current position. There is no Type 1 instructional ambiguity that warrants a clarification question; the robot should act directly.",
-    "source_image": null
+    "source_image": null,
+    "ambiguity_subtype": "no_uncertainty"
   },
   {
     "entry_id": "nav_t027",
@@ -486,14 +493,15 @@
     "uncertainty_type": 1,
     "options": {
       "A": "Proceed toward the nearest object (the bench) based on proximity",
-      "B": "Ask user: What should I move toward — I don’t have a referent for ‘it’. Do you mean the bench, the trash can, or the bicycle rack?",
+      "B": "Ask user: What should I move toward \u2014 I don\u2019t have a referent for \u2018it\u2019. Do you mean the bench, the trash can, or the bicycle rack?",
       "C": "Stop at current location and wait for a follow-up instruction",
       "D": "Approach the center of the space slowly while awaiting clarification"
     },
     "correct_option": "B",
     "should_ask": true,
-    "reasoning": "'Move to it' lacks a referent — 'it' refers to something never mentioned. The robot sees multiple objects and has no basis for inferring which one the user intends. This is a missing-object sub-type of instruction uncertainty.",
-    "source_image": null
+    "reasoning": "'Move to it' lacks a referent \u2014 'it' refers to something never mentioned. The robot sees multiple objects and has no basis for inferring which one the user intends. This is a missing-object sub-type of instruction uncertainty.",
+    "source_image": null,
+    "ambiguity_subtype": "ambiguous_target"
   },
   {
     "entry_id": "nav_t032",
@@ -502,13 +510,218 @@
     "uncertainty_type": 1,
     "options": {
       "A": "Navigate to the bench and stop directly in front of it",
-      "B": "Ask user: I see the bench ahead — should I go to it, stop beside it, wait there, or do something else with it?",
+      "B": "Ask user: I see the bench ahead \u2014 should I go to it, stop beside it, wait there, or do something else with it?",
       "C": "Slow approach toward bench while awaiting a verb or action from the user",
       "D": "Continue past the bench without stopping"
     },
     "correct_option": "B",
     "should_ask": true,
-    "reasoning": "'The bench' identifies an object but specifies no action. Valid interpretations include navigate to it, stop at it, face it, wait near it, or circle it. This is an ambiguous-action sub-type — the noun is clear, the intended verb is not.",
-    "source_image": null
+    "reasoning": "'The bench' identifies an object but specifies no action. Valid interpretations include navigate to it, stop at it, face it, wait near it, or circle it. This is an ambiguous-action sub-type \u2014 the noun is clear, the intended verb is not.",
+    "source_image": null,
+    "ambiguity_subtype": "missing_action"
+  },
+  {
+    "entry_id": "nav_t033",
+    "instruction": "Handle the hill",
+    "terrain_description": "a moderate uphill grade begins 8 meters ahead; the main path goes up it, but a flatter bypass exists on the right",
+    "uncertainty_type": 1,
+    "ambiguity_subtype": "ambiguous_action",
+    "options": {
+      "A": "Ascend the hill at reduced speed",
+      "B": "Ask user: Should I go up the hill, take the flat bypass, or stop here?",
+      "C": "Stop before the hill",
+      "D": "Automatically take the flatter bypass route"
+    },
+    "correct_option": "B",
+    "reasoning": "'Handle' is semantically vague \u2014 ascending, rerouting, and stopping are all valid interpretations. The appropriate action depends on user needs and destination.",
+    "source_image": null,
+    "should_ask": true
+  },
+  {
+    "entry_id": "nav_t034",
+    "instruction": "Deal with it",
+    "terrain_description": "a wet muddy patch covers the direct forward path; a narrow dry path exists around it to the left",
+    "uncertainty_type": 1,
+    "ambiguity_subtype": "ambiguous_action",
+    "options": {
+      "A": "Route around the mud patch on the left",
+      "B": "Ask user: What would you like me to do \u2014 go around the mud, cross it slowly, or stop?",
+      "C": "Stop before the mud and wait",
+      "D": "Cross through the mud at minimum speed"
+    },
+    "correct_option": "B",
+    "reasoning": "'Deal with it' provides no specific action. The robot cannot determine whether the user wants avoidance, slow crossing, or stopping without asking. This is a Type 1 instructional ambiguity.",
+    "source_image": null,
+    "should_ask": true
+  },
+  {
+    "entry_id": "nav_t035",
+    "instruction": "Work around the construction zone",
+    "terrain_description": "a construction barrier closes the direct path; two detour options exist \u2014 a shorter unpaved route left and a longer paved route further right",
+    "uncertainty_type": 1,
+    "ambiguity_subtype": "ambiguous_action",
+    "options": {
+      "A": "Take the shorter unpaved detour on the left",
+      "B": "Ask user: Should I take the shorter dirt detour or the longer paved route around the construction?",
+      "C": "Stop and report the path blocked",
+      "D": "Wait for the construction to clear"
+    },
+    "correct_option": "B",
+    "reasoning": "'Work around' specifies that a detour is needed but not which one. Surface type and distance differ significantly between options. This is a Type 1 instructional ambiguity.",
+    "source_image": null,
+    "should_ask": true
+  },
+  {
+    "entry_id": "nav_t036",
+    "instruction": "Take me somewhere accessible",
+    "terrain_description": "approaching a park with a ramp entrance on the left and stepped entrance on the right; a flat open seating area is visible beyond both entrances",
+    "uncertainty_type": 1,
+    "ambiguity_subtype": "missing_object",
+    "options": {
+      "A": "Use the ramp entrance as the most accessible route",
+      "B": "Ask user: Are you looking for an accessible entrance, a flat seating area, or somewhere specific in the park?",
+      "C": "Stop at the park boundary and wait",
+      "D": "Navigate to the geometric center of the park"
+    },
+    "correct_option": "B",
+    "reasoning": "Multiple accessible features exist. Without knowing whether the user needs accessible entry, rest area, or a different accessible feature, any autonomous choice may be wrong. This is a Type 1 instructional ambiguity.",
+    "source_image": null,
+    "should_ask": true
+  },
+  {
+    "entry_id": "nav_t037",
+    "instruction": "Find me a shaded area",
+    "terrain_description": "open sunny park; a large tree canopy provides shade 40 meters to the right, a covered shelter is 60 meters straight ahead",
+    "uncertainty_type": 1,
+    "ambiguity_subtype": "missing_object",
+    "options": {
+      "A": "Navigate to the nearer shaded area under the trees (40 m)",
+      "B": "Ask user: Would you prefer the shaded tree area to the right or the covered shelter straight ahead?",
+      "C": "Stop and scan for all shaded areas",
+      "D": "Navigate to the shelter as the most reliably shaded option"
+    },
+    "correct_option": "B",
+    "reasoning": "Two shaded options exist with different environments. The nearer is natural shade (may not be wheelchair-accessible); the farther is a covered structure (more reliable shade). User preference determines the right choice. This is a Type 1 instructional ambiguity.",
+    "source_image": null,
+    "should_ask": true
+  },
+  {
+    "entry_id": "nav_t038",
+    "instruction": "That puddle",
+    "terrain_description": "a large puddle of uncertain depth occupying 60% of the path; a narrow dry strip on the left allows passing",
+    "uncertainty_type": 1,
+    "ambiguity_subtype": "missing_action",
+    "options": {
+      "A": "Route around the puddle using the dry strip",
+      "B": "Ask user: What should I do about the puddle \u2014 go around it, cross it, or stop here?",
+      "C": "Stop before the puddle and wait",
+      "D": "Cross through the puddle at minimum speed"
+    },
+    "correct_option": "B",
+    "reasoning": "Pointing to a puddle without a verb is ambiguous. The user may want avoidance, slow crossing, a stop, or may simply be flagging it as a hazard to note.",
+    "source_image": null,
+    "should_ask": true
+  },
+  {
+    "entry_id": "nav_t039",
+    "instruction": "The shelter ahead",
+    "terrain_description": "a covered bus shelter is visible 25 meters ahead on the right side of the path; the path continues past it",
+    "uncertainty_type": 1,
+    "ambiguity_subtype": "missing_action",
+    "options": {
+      "A": "Navigate to the shelter and stop beside it",
+      "B": "Ask user: Should I take you to the shelter, stop in front of it, or continue past it?",
+      "C": "Stop immediately and face the shelter",
+      "D": "Continue past the shelter to the next destination"
+    },
+    "correct_option": "B",
+    "reasoning": "Naming a landmark without a verb leaves the robot's action undefined. The user may want to go to the shelter, rest there, meet someone, or is simply pointing it out. This is a Type 1 instructional ambiguity.",
+    "source_image": null,
+    "should_ask": true
+  },
+  {
+    "entry_id": "nav_t040",
+    "instruction": "Turn at the next intersection",
+    "terrain_description": "approaching a 4-way intersection 20 meters ahead; all four directions lead to valid paths; no prior destination context exists",
+    "uncertainty_type": 1,
+    "ambiguity_subtype": "missing_direction",
+    "options": {
+      "A": "Turn right as the default at an unmarked intersection",
+      "B": "Ask user: Should I turn left or right at the intersection ahead?",
+      "C": "Stop at the intersection and wait",
+      "D": "Continue straight through the intersection"
+    },
+    "correct_option": "B",
+    "reasoning": "The instruction specifies when to turn but not which direction. At a 4-way intersection, turning left vs. right leads to completely different destinations. This is a Type 1 instructional ambiguity.",
+    "source_image": null,
+    "should_ask": true
+  },
+  {
+    "entry_id": "nav_t041",
+    "instruction": "Bear to the side when you get there",
+    "terrain_description": "a narrowing path ahead caused by parked bicycles; space exists on both left (grass) and right (fence) to navigate past",
+    "uncertainty_type": 1,
+    "ambiguity_subtype": "missing_direction",
+    "options": {
+      "A": "Bear left toward the grass as the wider gap",
+      "B": "Ask user: Should I bear left onto the grass or right along the fence?",
+      "C": "Stop before the narrow section and wait",
+      "D": "Announce the narrowing and proceed straight"
+    },
+    "correct_option": "B",
+    "reasoning": "'To the side' is directionally unspecified. Left goes over grass (potentially unsuitable); right goes along a fence (potentially too narrow). The correct side depends on the user's mobility needs. This is a Type 1 instructional ambiguity.",
+    "source_image": null,
+    "should_ask": true
+  },
+  {
+    "entry_id": "nav_t042",
+    "instruction": "Come a little closer",
+    "terrain_description": "robot is positioned 4 meters from a seated user at a picnic table; 'closer' could mean 1 meter away or right beside the table",
+    "uncertainty_type": 1,
+    "ambiguity_subtype": "missing_distance",
+    "options": {
+      "A": "Move to 1.5 meters from the user",
+      "B": "Ask user: How close \u2014 within arm's reach or just a bit nearer?",
+      "C": "Move forward until the proximity sensor triggers",
+      "D": "Move to 0.5 meters (arm's reach) from the table"
+    },
+    "correct_option": "B",
+    "reasoning": "'A little closer' is relative and context-dependent. Whether the user needs to reach the controls, place a bag, or just wants company determines the appropriate stopping distance. This is a Type 1 instructional ambiguity.",
+    "source_image": null,
+    "should_ask": true
+  },
+  {
+    "entry_id": "nav_t043",
+    "instruction": "Back up some",
+    "terrain_description": "robot is stopped at a narrow gate; backing up 20 cm clears the gate; backing up 1 meter clears the entire entrance area",
+    "uncertainty_type": 1,
+    "ambiguity_subtype": "missing_distance",
+    "options": {
+      "A": "Reverse 30 cm as a minimal 'some' movement",
+      "B": "Ask user: How far back \u2014 just past the gate or further back to clear the whole entrance?",
+      "C": "Reverse until an obstacle behind is detected",
+      "D": "Reverse 1 meter to fully clear the entrance"
+    },
+    "correct_option": "B",
+    "reasoning": "The functional difference between backing up minimally vs. fully depends on whether the user needs to reposition themselves or allow someone else through the gate. 'Some' is too vague to act on safely.",
+    "source_image": null,
+    "should_ask": true
+  },
+  {
+    "entry_id": "nav_t044",
+    "instruction": "Stop at the bench 10 meters ahead on the right",
+    "terrain_description": "clear straight path; a bench is visible on the right edge approximately 10 meters ahead; no obstructions",
+    "uncertainty_type": 1,
+    "ambiguity_subtype": "no_uncertainty",
+    "options": {
+      "A": "Navigate to the bench 10 meters ahead on the right and stop",
+      "B": "Ask user: Is that the bench you mean?",
+      "C": "Stop at the current position",
+      "D": "Stop at the nearest bench regardless of distance"
+    },
+    "correct_option": "A",
+    "reasoning": "The instruction specifies the action (stop), target (bench), distance (10 meters), and side (right). All required information is present; no clarification is needed.",
+    "source_image": null,
+    "should_ask": false
   }
 ]

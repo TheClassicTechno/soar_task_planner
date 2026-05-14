@@ -10,11 +10,13 @@ Orchestrates the full pipeline for one scene:
   6. Apply user feedback and re-score trajectories (optional second pass)
 
 Decision logic:
-  - PROCEED: at least one trajectory avoids all unknown regions
-  - ASK:     forward trajectory passes through unknown, but alternatives exist
-             OR unknown coverage > ask_unknown_threshold
-  - STOP:    all trajectories pass through unknown AND no safe path found
-             (typically when unknown_coverage is very large)
+  - PROCEED: at least one trajectory avoids all unknown regions AND all on-path
+             scene-graph nodes (if a SceneGraph is provided) have low Dirichlet
+             semantic entropy.
+  - ASK:     unknown coverage > ask_unknown_threshold, OR best trajectory passes
+             through unknown, OR any on-path node's semantic_entropy() exceeds
+             entropy_ask_threshold (the robot is uncertain about terrain class).
+  - STOP:    unknown_coverage >= stop_unknown_threshold (no safe path exists).
 
 Results are returned as EnvUncertaintyDecision objects, which are compatible
 with the nav_env_test.json evaluation schema.
@@ -26,8 +28,10 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from system.env_uncertainty.detector import DetectionResult, EnvironmentalUncertaintyDetector
+from system.env_uncertainty.gp_traversability import GPTraversabilityMap
 from system.env_uncertainty.map_updater import MapUpdater
 from system.env_uncertainty.question_generator import QuestionGenerator
+from system.env_uncertainty.scene_graph import SceneGraph, TerrainNode
 from system.env_uncertainty.trajectory import Trajectory, TrajectoryGenerator
 from system.env_uncertainty.traversability import TraversabilityMap
 
@@ -86,6 +90,7 @@ class EnvironmentalUncertaintyRunner:
         decision_cfg = self._config.get("decision", {})
         self._ask_threshold = decision_cfg.get("ask_unknown_threshold", 0.10)
         self._stop_threshold = decision_cfg.get("stop_unknown_threshold", 0.80)
+        self._entropy_threshold = decision_cfg.get("entropy_ask_threshold", 1.5)
 
         traj_cfg = self._config.get("trajectory", {})
         self._n_waypoints = traj_cfg.get("n_waypoints", 20)
@@ -98,18 +103,25 @@ class EnvironmentalUncertaintyRunner:
         self._detector = detector or EnvironmentalUncertaintyDetector()
         self._question_gen = QuestionGenerator(mode=q_mode, llm=llm)
         self._map_updater = MapUpdater()
+        self._gp_map = GPTraversabilityMap()
 
     def run_scene(
         self,
         image,
         scene_id: str = "scene",
+        scene_graph: Optional[SceneGraph] = None,
     ) -> EnvUncertaintyDecision:
         """
         Run the full pipeline on one image.
 
         Args:
-            image:    (H, W, 3) uint8 numpy array (RGB).
-            scene_id: Identifier string for logging/results.
+            image:        (H, W, 3) uint8 numpy array (RGB).
+            scene_id:     Identifier string for logging/results.
+            scene_graph:  Optional SceneGraph built from Steps 3–5 of the
+                          pipeline.  When provided, nodes adjacent to the best
+                          trajectory are checked for high Dirichlet semantic
+                          entropy and can trigger ASK independently of unknown
+                          coverage.
 
         Returns:
             EnvUncertaintyDecision with action and optional question.
@@ -121,7 +133,10 @@ class EnvironmentalUncertaintyRunner:
         # Step 1: Detect unknown regions
         result: DetectionResult = self._detector.detect(image)
 
-        # Step 2: Generate and score candidate trajectories
+        # Step 4: Seed GP with traversability observations from known regions
+        self._seed_gp_from_detection(result, h, w)
+
+        # Step 2: Generate and score candidate trajectories (passes_through_unknown flag)
         gen = TrajectoryGenerator(h, w, n_waypoints=self._n_waypoints)
         raw_trajectories = gen.generate_trajectories()
         scored_trajectories = [
@@ -129,11 +144,18 @@ class EnvironmentalUncertaintyRunner:
             for t in raw_trajectories
         ]
 
-        # Step 3: Select best trajectory
-        best = gen.select_best_trajectory(scored_trajectories)
+        # Step 5: Select best trajectory using GP LCB (pessimistic safety ranking)
+        best = self._select_best_trajectory_lcb(scored_trajectories, h, w)
+
+        # Resolve on-path scene-graph nodes for entropy check (Steps 3–5 output)
+        on_path_nodes: List[TerrainNode] = []
+        if scene_graph is not None and best is not None:
+            on_path_nodes = self._on_path_nodes(scene_graph, best, h, w)
 
         # Step 4: Determine robot action
-        action, question = self._decide_action(result, scored_trajectories, best)
+        action, question = self._decide_action(
+            result, scored_trajectories, best, on_path_nodes
+        )
 
         return EnvUncertaintyDecision(
             scene_id=scene_id,
@@ -209,21 +231,86 @@ class EnvironmentalUncertaintyRunner:
 
     # ── Private helpers ───────────────────────────────────────────────────────
 
+    def _seed_gp_from_detection(
+        self, result: DetectionResult, height: int, width: int
+    ) -> None:
+        """
+        Add one GP observation per known region, at its mask centroid.
+
+        This runs Step 4 of the pipeline: the GP posterior is updated with
+        SAM3's traversability labels before trajectory LCB scoring (Step 5).
+        Unknown regions are intentionally excluded — the GP only learns from
+        regions the robot already has a label for.
+        """
+        import numpy as np
+        for region in result.known_regions:
+            mask = np.asarray(region.mask)
+            if not np.any(mask):
+                continue
+            ys, xs = np.where(mask)
+            cy, cx = int(np.mean(ys)), int(np.mean(xs))
+            self._gp_map.add_observation(cy, cx, region.traversability, height, width)
+
+    def _select_best_trajectory_lcb(
+        self,
+        trajectories: List[Trajectory],
+        height: int,
+        width: int,
+    ) -> Optional[Trajectory]:
+        """
+        Select the safest trajectory by GP LCB score.
+
+        Only considers trajectories where passes_through_unknown=False.
+        Among those, returns the one with the highest min LCB over its waypoints.
+        Returns None if every trajectory passes through unknown (triggers ASK).
+        """
+        safe = [t for t in trajectories if not t.passes_through_unknown]
+        if not safe:
+            return None
+        return max(
+            safe,
+            key=lambda t: self._gp_map.score_trajectory_lcb(t.waypoints, height, width),
+        )
+
     def _decide_action(
         self,
         result: DetectionResult,
         trajectories: List[Trajectory],
         best_trajectory: Optional[Trajectory],
+        on_path_nodes: Optional[List[TerrainNode]] = None,
     ):
         """
         Apply decision thresholds to pick PROCEED, ASK, or STOP.
 
-        Returns (action_str, question_str_or_None).
+        Args:
+            result:          DetectionResult from the detector.
+            trajectories:    All scored candidate trajectories.
+            best_trajectory: Highest-scoring trajectory (may be None).
+            on_path_nodes:   TerrainNodes adjacent to best_trajectory from the
+                             scene graph.  When any node's semantic_entropy()
+                             exceeds self._entropy_threshold the robot must ASK
+                             even if unknown_coverage looks acceptable.
+
+        Returns:
+            (action_str, question_str_or_None)
         """
+        if on_path_nodes is None:
+            on_path_nodes = []
+
         # Very large unknown area → STOP (robot cannot proceed safely)
         if result.unknown_coverage >= self._stop_threshold:
             question = self._question_gen.generate(result, trajectories)
             return "STOP", question
+
+        # High Dirichlet semantic entropy on planned path → ASK.
+        # The robot doesn't know what terrain class it's heading into, so it
+        # must clarify before committing — regardless of unknown_coverage.
+        if any(
+            node.semantic_entropy() > self._entropy_threshold
+            for node in on_path_nodes
+        ):
+            question = self._question_gen.generate(result, trajectories)
+            return "ASK", question
 
         # No unknown regions, or unknown area is small and off-path → PROCEED
         if not result.has_unknown or (
@@ -236,3 +323,35 @@ class EnvironmentalUncertaintyRunner:
         # Unknown region exists and robot's path is affected → ASK
         question = self._question_gen.generate(result, trajectories)
         return "ASK", question
+
+    def _on_path_nodes(
+        self,
+        scene_graph: SceneGraph,
+        trajectory: Trajectory,
+        height: int,
+        width: int,
+    ) -> List[TerrainNode]:
+        """
+        Return all scene-graph nodes whose grid cell any waypoint touches.
+
+        Deduplicates by (label, cell) so each node appears at most once.
+
+        Args:
+            scene_graph: Current SceneGraph instance.
+            trajectory:  Scored trajectory with (y, x) waypoints.
+            height:      Image height in pixels.
+            width:       Image width in pixels.
+
+        Returns:
+            Flat list of unique TerrainNodes along the trajectory.
+        """
+        seen: set = set()
+        nodes: List[TerrainNode] = []
+        for wy, wx in trajectory.waypoints:
+            cy, cx = scene_graph.pixel_to_cell(wy, wx, height, width)
+            for node in scene_graph.nodes_in_cell(cy, cx):
+                key = (node.label, node.position_cell_id)
+                if key not in seen:
+                    seen.add(key)
+                    nodes.append(node)
+        return nodes

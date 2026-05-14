@@ -23,3 +23,15 @@ build/
 # Outputs
 outputs/
 *.json
+
+# LaTeX artifacts
+docs/*.aux
+docs/*.log
+docs/*.pdf
+
+# Personal notes / scratch (root-level only)
+/*.txt
+/meeting_prep*.md
+/may12progress.md
+/progress_update*.md
+/ourmethodsdiagram.png

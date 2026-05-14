@@ -27,13 +27,38 @@ Tests:
 
   UpdateResult fields:
     - region_updated, updated_map, feedback_applied, is_traversable all present
+
+  parse_user_response_rich:
+    Confidence extraction:
+      - "definitely" → label_confidence=0.95
+      - "probably" → label_confidence=0.65
+      - "not sure" (multi-word) beats "sure" (single-word) — phrase priority
+      - No hedge word → neutral default 0.70
+    Terrain label extraction:
+      - "grass" / "lawn" → terrain_label="grass"
+      - "pavement" → terrain_label="sidewalk"
+      - "mud" → terrain_label="mud"
+      - No terrain word → terrain_label=None
+    Traversability extraction (affordance scoring):
+      - "safe" alone → is_traversable=True, modifier>0
+      - "wet slippery" → is_traversable=False, modifier<0
+      - Composite: "safe but slippery" → sum of modifiers determines result
+      - No traversability keywords → safety-first default: is_traversable=False, confidence=0.30
+    Keywords list captures all matched tokens
+    Traversability confidence stays in [0.05, 0.95]
 """
 
 import numpy as np
 import pytest
 
 from system.env_uncertainty.detector import DetectionResult, RegionInfo
-from system.env_uncertainty.map_updater import MapUpdater, UpdateResult, _parse_user_response
+from system.env_uncertainty.map_updater import (
+    MapUpdater,
+    ParsedUserResponse,
+    UpdateResult,
+    _parse_user_response,
+    parse_user_response_rich,
+)
 from system.env_uncertainty.traversability import TraversabilityMap
 
 
@@ -291,3 +316,160 @@ def test_update_result_has_all_fields():
     assert hasattr(update, "updated_map")
     assert hasattr(update, "feedback_applied")
     assert hasattr(update, "is_traversable")
+
+
+# ── parse_user_response_rich — confidence extraction ─────────────────────────
+
+def test_rich_definitely_sets_high_confidence():
+    r = parse_user_response_rich("definitely safe to cross")
+    assert r.label_confidence == pytest.approx(0.95)
+
+
+def test_rich_probably_sets_medium_confidence():
+    r = parse_user_response_rich("probably fine to walk through")
+    assert r.label_confidence == pytest.approx(0.65)
+
+
+def test_rich_not_sure_beats_sure():
+    # "not sure" is a 2-word phrase; it must win over the single word "sure"
+    r = parse_user_response_rich("not sure if it's safe")
+    assert r.label_confidence == pytest.approx(0.30)
+
+
+def test_rich_no_hedge_word_returns_neutral_confidence():
+    r = parse_user_response_rich("it is grass")
+    assert r.label_confidence == pytest.approx(0.70)
+
+
+# ── parse_user_response_rich — terrain label extraction ──────────────────────
+
+def test_rich_grass_detected():
+    r = parse_user_response_rich("that's just grass, go ahead")
+    assert r.terrain_label == "grass"
+
+
+def test_rich_lawn_maps_to_grass():
+    r = parse_user_response_rich("it looks like a lawn")
+    assert r.terrain_label == "grass"
+
+
+def test_rich_pavement_maps_to_sidewalk():
+    r = parse_user_response_rich("pavement, totally safe")
+    assert r.terrain_label == "sidewalk"
+
+
+def test_rich_mud_detected():
+    r = parse_user_response_rich("looks like mud, avoid it")
+    assert r.terrain_label == "mud"
+
+
+def test_rich_no_terrain_word_returns_none():
+    r = parse_user_response_rich("yes it's fine")
+    assert r.terrain_label is None
+
+
+# ── parse_user_response_rich — traversability affordance scoring ──────────────
+
+def test_rich_safe_alone_is_traversable():
+    r = parse_user_response_rich("safe to cross")
+    assert r.is_traversable is True
+    assert r.affordance_modifier > 0
+
+
+def test_rich_unsafe_alone_is_not_traversable():
+    r = parse_user_response_rich("unsafe, do not enter")
+    assert r.is_traversable is False
+    assert r.affordance_modifier < 0
+
+
+def test_rich_wet_slippery_is_not_traversable():
+    r = parse_user_response_rich("it's wet and slippery")
+    assert r.is_traversable is False
+    assert r.affordance_modifier < 0
+
+
+def test_rich_wet_slippery_modifier_is_sum():
+    # wet=-0.15, slippery=-0.20 → sum=-0.35
+    r = parse_user_response_rich("wet and slippery")
+    assert r.affordance_modifier == pytest.approx(-0.35, abs=1e-9)
+
+
+def test_rich_safe_but_slippery_modifier_sums_both():
+    # safe=+0.20, slippery=-0.20 → sum=0.0 → is_traversable=True (boundary)
+    r = parse_user_response_rich("safe but slippery")
+    assert r.affordance_modifier == pytest.approx(0.0, abs=1e-9)
+    assert r.is_traversable is True
+
+
+def test_rich_avoid_word_makes_not_traversable():
+    r = parse_user_response_rich("avoid this area")
+    assert r.is_traversable is False
+
+
+def test_rich_no_traversability_keywords_safety_first():
+    # When no affordance keyword matches, default to is_traversable=False
+    r = parse_user_response_rich("I have no idea")
+    assert r.is_traversable is False
+    assert r.traversability_confidence == pytest.approx(0.30)
+
+
+def test_rich_no_traversability_keywords_empty_string():
+    r = parse_user_response_rich("")
+    assert r.is_traversable is False
+    assert r.traversability_confidence == pytest.approx(0.30)
+
+
+# ── parse_user_response_rich — traversability_confidence bounds ───────────────
+
+def test_rich_traversability_confidence_in_unit_interval():
+    for text in ["safe", "unsafe", "wet slippery muddy flooded dangerous", "dry firm flat paved"]:
+        r = parse_user_response_rich(text)
+        assert 0.0 <= r.traversability_confidence <= 1.0, f"out of bounds for: {text!r}"
+
+
+def test_rich_high_positive_modifier_capped_at_095():
+    # walkable+passable+traversable+safe+firm+solid+stable = many positives
+    r = parse_user_response_rich("walkable passable traversable safe firm solid stable flat dry")
+    assert r.traversability_confidence <= 0.95
+
+
+def test_rich_high_negative_modifier_floored_at_005():
+    r = parse_user_response_rich("unsafe dangerous avoid flooded icy slippery muddy steep")
+    assert r.traversability_confidence >= 0.05
+
+
+# ── parse_user_response_rich — keywords list ──────────────────────────────────
+
+def test_rich_keywords_list_contains_matched_tokens():
+    r = parse_user_response_rich("probably wet grass")
+    assert "probably" in r.keywords
+    assert "wet" in r.keywords
+    assert "grass" in r.keywords
+
+
+def test_rich_no_false_keywords_for_clean_safe_response():
+    r = parse_user_response_rich("safe")
+    assert "unsafe" not in r.keywords
+    assert "safe" in r.keywords
+
+
+def test_rich_keywords_empty_for_blank_input():
+    r = parse_user_response_rich("")
+    assert r.keywords == []
+
+
+# ── parse_user_response_rich — ParsedUserResponse dataclass ──────────────────
+
+def test_rich_returns_parsed_user_response_type():
+    r = parse_user_response_rich("probably safe grass")
+    assert isinstance(r, ParsedUserResponse)
+
+
+def test_rich_all_fields_present():
+    r = parse_user_response_rich("maybe wet mud")
+    assert hasattr(r, "terrain_label")
+    assert hasattr(r, "label_confidence")
+    assert hasattr(r, "is_traversable")
+    assert hasattr(r, "traversability_confidence")
+    assert hasattr(r, "affordance_modifier")
+    assert hasattr(r, "keywords")
