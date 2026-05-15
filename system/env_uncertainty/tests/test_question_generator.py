@@ -171,3 +171,93 @@ def test_invalid_mode_raises():
 def test_llm_mode_without_llm_raises():
     with pytest.raises(ValueError):
         QuestionGenerator(mode="llm", llm=None)
+
+
+# ── Grounded question generation (top_k_classes) ──────────────────────────────
+
+_TOP_K = [("mud", 0.50), ("gravel", 0.30), ("grass", 0.20)]
+
+
+def test_grounded_standard_mentions_first_class():
+    result = _make_result()
+    q = generate_question_template(result, top_k_classes=_TOP_K)
+    assert "mud" in q.lower()
+
+
+def test_grounded_standard_mentions_all_three_classes():
+    result = _make_result()
+    q = generate_question_template(result, top_k_classes=_TOP_K)
+    for name, _ in _TOP_K:
+        assert name in q.lower(), f"Expected '{name}' in grounded question"
+
+
+def test_grounded_terse_is_shorter():
+    from system.env_uncertainty.user_profile import UserProfile
+    result = _make_result()
+    terse_profile = UserProfile(user_id="t1", verbosity="terse", expertise="novice", preferred_format="question")
+    q = generate_question_template(result, profile=terse_profile, top_k_classes=_TOP_K)
+    assert "mud" in q.lower()
+    assert len(q) < 120
+
+
+def test_grounded_verbose_shows_percentages():
+    from system.env_uncertainty.user_profile import UserProfile
+    result = _make_result()
+    verbose_profile = UserProfile(user_id="t2", verbosity="verbose", expertise="expert", preferred_format="question")
+    q = generate_question_template(result, profile=verbose_profile, top_k_classes=_TOP_K)
+    assert "50%" in q or "mud" in q.lower()
+
+
+def test_grounded_overrides_large_unknown_template():
+    # Even with large unknown coverage, top_k_classes takes priority over generic template
+    result = _make_result(unknown_coverage=0.80)
+    q = generate_question_template(result, top_k_classes=_TOP_K)
+    assert "mud" in q.lower()
+    assert "unrecogni" not in q.lower()
+
+
+def test_no_top_k_keeps_existing_template_behavior():
+    # Without top_k_classes the existing template selection is unchanged
+    result = _make_result(n_unknown=1, unknown_coverage=0.15)
+    q = generate_question_template(result, trajectories=[_safe_traj(), _unsafe_traj()])
+    assert "alternative" in q.lower() or "route" in q.lower()
+
+
+def test_generator_passes_top_k_to_template():
+    gen = QuestionGenerator(mode="template")
+    result = _make_result()
+    q = gen.generate(result, top_k_classes=_TOP_K)
+    assert "mud" in q.lower()
+
+
+def test_llm_prompt_includes_top_k_class_names():
+    from system.env_uncertainty.question_generator import _build_llm_prompt
+    from system.env_uncertainty.user_profile import DEFAULT_PROFILE
+    prompt = _build_llm_prompt(
+        _make_result(), trajectories=None,
+        profile=DEFAULT_PROFILE, scenario_context=None,
+        top_k_classes=_TOP_K,
+    )
+    assert "mud" in prompt
+    assert "gravel" in prompt
+    assert "grass" in prompt
+
+
+def test_llm_prompt_without_top_k_has_no_candidates_section():
+    from system.env_uncertainty.question_generator import _build_llm_prompt
+    from system.env_uncertainty.user_profile import DEFAULT_PROFILE
+    prompt = _build_llm_prompt(
+        _make_result(), trajectories=None,
+        profile=DEFAULT_PROFILE, scenario_context=None,
+        top_k_classes=None,
+    )
+    assert "Terrain class candidates" not in prompt
+
+
+def test_option_list_format_ignores_top_k():
+    # option_list format is excluded from grounded path — stays as numbered options
+    from system.env_uncertainty.user_profile import UserProfile
+    result = _make_result(n_unknown=1, unknown_coverage=0.15)
+    opt_profile = UserProfile(user_id="t3", verbosity="standard", expertise="novice", preferred_format="option_list")
+    q = generate_question_template(result, profile=opt_profile, top_k_classes=_TOP_K)
+    assert "1." in q or "2." in q

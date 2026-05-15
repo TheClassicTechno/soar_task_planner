@@ -297,9 +297,14 @@ class EnvironmentalUncertaintyRunner:
         if on_path_nodes is None:
             on_path_nodes = []
 
+        # Extract top-k terrain candidates from the most uncertain on-path node.
+        # Passed into question gen so the robot names what it thinks it's seeing
+        # instead of saying "unrecognized area" generically.
+        top_k = self._top_k_from_nodes(on_path_nodes)
+
         # Very large unknown area → STOP (robot cannot proceed safely)
         if result.unknown_coverage >= self._stop_threshold:
-            question = self._question_gen.generate(result, trajectories)
+            question = self._question_gen.generate(result, trajectories, top_k_classes=top_k)
             return "STOP", question
 
         # High Dirichlet semantic entropy on planned path → ASK.
@@ -309,7 +314,7 @@ class EnvironmentalUncertaintyRunner:
             node.semantic_entropy() > self._entropy_threshold
             for node in on_path_nodes
         ):
-            question = self._question_gen.generate(result, trajectories)
+            question = self._question_gen.generate(result, trajectories, top_k_classes=top_k)
             return "ASK", question
 
         # No unknown regions, or unknown area is small and off-path → PROCEED
@@ -321,8 +326,25 @@ class EnvironmentalUncertaintyRunner:
             return "PROCEED", None
 
         # Unknown region exists and robot's path is affected → ASK
-        question = self._question_gen.generate(result, trajectories)
+        question = self._question_gen.generate(result, trajectories, top_k_classes=top_k)
         return "ASK", question
+
+    def _top_k_from_nodes(
+        self,
+        on_path_nodes: List[TerrainNode],
+        k: int = 3,
+    ):
+        """
+        Return top-k terrain class candidates from the most uncertain on-path node.
+
+        Finds the node with the highest semantic entropy (most uncertain about
+        terrain class) and returns its Dirichlet top-k. Returns None when there
+        are no on-path nodes, so question gen falls back to generic templates.
+        """
+        if not on_path_nodes:
+            return None
+        most_uncertain = max(on_path_nodes, key=lambda n: n.semantic_entropy())
+        return most_uncertain.top_k_classes(k=k)
 
     def _on_path_nodes(
         self,

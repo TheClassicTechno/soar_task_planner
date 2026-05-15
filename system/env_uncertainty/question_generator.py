@@ -14,7 +14,7 @@ Both modes support an optional UserProfile that adapts question style
 (verbosity, expertise level, output format) to the specific operator.
 """
 
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 
 from system.env_uncertainty.detector import DetectionResult
 from system.env_uncertainty.trajectory import Trajectory
@@ -110,25 +110,68 @@ _TEMPLATE_OPTIONS_NO_ALTERNATIVE = (
 _LARGE_UNKNOWN_THRESHOLD = 0.50
 
 
+# ── Scene-graph-grounded question formatters ──────────────────────────────────
+# Used when the Dirichlet posterior gives us candidate terrain classes.
+# These replace the generic "unrecognized area" phrasing with the actual
+# top-k class names the robot currently believes it might be looking at.
+
+def _grounded_standard(classes: List[Tuple[str, float]]) -> str:
+    names = [c[0] for c in classes[:3]]
+    if len(names) == 1:
+        candidates = names[0]
+    elif len(names) == 2:
+        candidates = f"{names[0]} or {names[1]}"
+    else:
+        candidates = f"{names[0]}, {names[1]}, or {names[2]}"
+    return (
+        f"I see something ahead that I'm not sure about — "
+        f"it could be {candidates}. "
+        "Is it safe to cross?"
+    )
+
+
+def _grounded_terse(classes: List[Tuple[str, float]]) -> str:
+    names = ", ".join(c[0] for c in classes[:3])
+    return f"Unknown terrain — possibly {names}. Safe to cross?"
+
+
+def _grounded_verbose(classes: List[Tuple[str, float]]) -> str:
+    lines = "\n".join(
+        f"  {name} ({int(prob * 100)}%)" for name, prob in classes[:3]
+    )
+    return (
+        "My terrain classifier is uncertain about the surface ahead. "
+        "Based on current observations the most likely terrain classes are:\n"
+        f"{lines}\n"
+        "I cannot confidently estimate traversability for any of these. "
+        "Is this area safe to cross?"
+    )
+
+
 def generate_question_template(
     result: DetectionResult,
     trajectories: Optional[List[Trajectory]] = None,
     profile: Optional[UserProfile] = None,
+    top_k_classes: Optional[List[Tuple[str, float]]] = None,
 ) -> str:
     """
     Generate a clarification question using pre-written templates.
 
     Selects the most appropriate template based on:
-      - How much of the scene is unknown (large_unknown threshold)
-      - How many distinct unknown regions exist
-      - Whether any safe alternative trajectory is available
-      - The user profile's verbosity and preferred_format settings
+      - top_k_classes: if provided (from scene graph Dirichlet posterior),
+        generates a grounded question naming the candidate terrain classes.
+        This is the primary case when the robot has semantic uncertainty.
+      - Otherwise selects by unknown coverage, region count, and safe alternatives.
+      - The user profile's verbosity and preferred_format settings always apply.
 
     Args:
-        result:       DetectionResult from EnvironmentalUncertaintyDetector.
-        trajectories: Scored trajectories (used to check for safe alternatives).
-        profile:      UserProfile controlling verbosity and format. Uses
-                      DEFAULT_PROFILE if None.
+        result:         DetectionResult from EnvironmentalUncertaintyDetector.
+        trajectories:   Scored trajectories (used to check for safe alternatives).
+        profile:        UserProfile controlling verbosity and format. Uses
+                        DEFAULT_PROFILE if None.
+        top_k_classes:  Top-k terrain candidates from TerrainNode.top_k_classes().
+                        When provided, overrides generic templates with a grounded
+                        question that names what the robot thinks it might be seeing.
 
     Returns:
         A natural-language question string.
@@ -142,6 +185,16 @@ def generate_question_template(
     has_safe = bool(trajectories and any(
         not t.passes_through_unknown for t in trajectories
     ))
+
+    # Grounded path: scene graph gave us Dirichlet top-k candidates.
+    # Use terrain-specific question instead of generic "unrecognized area" wording.
+    # Option-list format is excluded — grounded questions don't map cleanly to numbered options.
+    if top_k_classes and fmt != "option_list":
+        if verbosity == "terse":
+            return _grounded_terse(top_k_classes)
+        if verbosity == "verbose":
+            return _grounded_verbose(top_k_classes)
+        return _grounded_standard(top_k_classes)
 
     # Option-list format overrides verbosity for template selection
     if fmt == "option_list":
@@ -210,6 +263,7 @@ class QuestionGenerator:
         trajectories: Optional[List[Trajectory]] = None,
         user_profile: Optional[UserProfile] = None,
         scenario_context: Optional[str] = None,
+        top_k_classes: Optional[List[Tuple[str, float]]] = None,
     ) -> str:
         """
         Generate a clarification question for the detected unknown regions.
@@ -221,6 +275,9 @@ class QuestionGenerator:
                               Uses DEFAULT_PROFILE if None.
             scenario_context: Optional deployment context (e.g., "construction zone",
                               "night operation") for further question tailoring.
+            top_k_classes:    Top-k terrain candidates from TerrainNode.top_k_classes().
+                              When provided, the question names the candidates so the
+                              user knows what the robot thinks it might be seeing.
 
         Returns:
             A natural-language question string.
@@ -229,10 +286,12 @@ class QuestionGenerator:
 
         if self._mode == "llm":
             try:
-                return self._llm_question(result, trajectories, profile, scenario_context)
+                return self._llm_question(
+                    result, trajectories, profile, scenario_context, top_k_classes
+                )
             except Exception:
                 pass
-        return generate_question_template(result, trajectories, profile)
+        return generate_question_template(result, trajectories, profile, top_k_classes)
 
     def _llm_question(
         self,
@@ -240,15 +299,18 @@ class QuestionGenerator:
         trajectories: Optional[List[Trajectory]],
         profile: UserProfile,
         scenario_context: Optional[str],
+        top_k_classes: Optional[List[Tuple[str, float]]] = None,
     ) -> str:
         """
         Use an LLM to generate a context-rich, profile-aware question.
 
         Builds a prompt summarizing the detection result, trajectory options,
-        user profile, and optional scenario context. Calls llm.predict_json()
-        for a JSON response with a "question" field.
+        user profile, optional scenario context, and Dirichlet top-k terrain
+        candidates when available.
         """
-        prompt = _build_llm_prompt(result, trajectories, profile, scenario_context)
+        prompt = _build_llm_prompt(
+            result, trajectories, profile, scenario_context, top_k_classes
+        )
         response = self._llm.predict_json(prompt)
         question = response.get("question", "").strip()
         if not question:
@@ -263,12 +325,14 @@ def _build_llm_prompt(
     trajectories: Optional[List[Trajectory]],
     profile: UserProfile,
     scenario_context: Optional[str],
+    top_k_classes: Optional[List[Tuple[str, float]]] = None,
 ) -> str:
     """
     Build the prompt sent to the LLM for question generation.
 
-    Includes: unknown region summary, trajectory safety, user profile
-    description, and optional scenario context.
+    Includes: unknown region summary, trajectory safety, user profile,
+    optional scenario context, and Dirichlet top-k terrain candidates
+    when the scene graph has them.
     """
     n_unknown = len(result.unknown_regions)
     pct_unknown = int(result.unknown_coverage * 100)
@@ -289,6 +353,19 @@ def _build_llm_prompt(
         else ""
     )
 
+    # Inject Dirichlet top-k candidates so the LLM names them in the question.
+    if top_k_classes:
+        candidates = "\n".join(
+            f"  {i+1}. {name} ({int(prob * 100)}%)"
+            for i, (name, prob) in enumerate(top_k_classes)
+        )
+        top_k_section = (
+            f"\nTerrain class candidates (Dirichlet posterior):\n{candidates}\n"
+            "Name these candidates in your question so the user knows what the robot thinks it sees.\n"
+        )
+    else:
+        top_k_section = ""
+
     profile_section = describe_profile_for_prompt(profile)
 
     prompt = f"""You are an outdoor navigation robot. Your terrain perception system has detected an area it cannot classify.
@@ -297,7 +374,7 @@ Unknown region summary:
 - Number of unknown regions: {n_unknown}
 - Unknown area: approximately {pct_unknown}% of the scene
 - {traj_note}
-{context_line}
+{context_line}{top_k_section}
 {profile_section}
 
 Generate a single clarification question to ask the human user. Strictly follow the user profile above for verbosity, expertise level, and format.
