@@ -1,0 +1,28 @@
+# When-to-Ask (UPS) Navigation Baseline Configuration
+#
+# Three resolution strategies per UPS (Yuan et al., arXiv:2602.22474):
+#   EXECUTE   — confident, single option, not "none" → act directly
+#   CLARIFY   — multiple plausible options, no "none" → ask semantic question
+#   INCAPABLE — "none" option included → robot cannot safely navigate, escalate
+#
+# Key design: adds "E: none of the above" as a 5th option.
+# Bayesian intent factorization (2 LLM calls per scenario) shapes p_VLM
+# before conformal calibration, reducing VLM overconfidence.
+
+llm:
+  api_type: "openai"
+  model: "gpt-4o-mini"
+  max_tokens: 768
+  temperature: 0.0            # Deterministic for reproducible baselines
+
+conformal:
+  alpha: 0.15           # Miscoverage level — target success rate = 1 - alpha = 85%
+
+factorization:
+  enabled: true         # Use Bayesian intent factorization (UPS §IV-B)
+  n_intents: 3          # Number of possible user intents to hypothesize
+
+output:
+  save_dir: "outputs/whentoask_baseline"
+  save_decisions: true
+  save_predictor: true

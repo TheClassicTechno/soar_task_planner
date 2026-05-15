@@ -1,0 +1,37 @@
+.env
+.vscode
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# pytest
+.pytest_cache/
+
+# IDE
+.idea/
+
+# Outputs
+outputs/
+*.json
+
+# LaTeX artifacts
+docs/*.aux
+docs/*.log
+docs/*.pdf
+
+# Personal notes / scratch (root-level only)
+/*.txt
+/meeting_prep*.md
+/may12progress.md
+/progress_update*.md
+/ourmethodsdiagram.png

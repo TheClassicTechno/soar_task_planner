@@ -1,0 +1,20 @@
+# IntroPlan Navigation Baseline Configuration
+
+llm:
+  api_type: "openai"
+  model: "gpt-4o-mini"
+  max_tokens: 1024
+  temperature: 0.0            # Deterministic for reproducible baselines
+
+knowledge_base:
+  path: "baselines/introplan/data/nav_calibration.json"
+  top_k: 3              # Number of similar examples to retrieve per scenario
+
+conformal:
+  alpha: 0.15           # Miscoverage level — target success rate = 1 - alpha = 85%
+  # tau is computed at runtime during calibrate(); saved to outputs/ after calibration
+
+output:
+  save_dir: "outputs/introplan_baseline"
+  save_decisions: true  # Save per-scenario decisions to JSON
+  save_predictor: true  # Save calibrated ConformalPredictor state to JSON

@@ -1,0 +1,16 @@
+# Always Ask Baseline Configuration
+
+llm:
+  api_type: "openai"
+  model: "gpt-4o-mini"
+  max_tokens: 1024
+  temperature: 0.0
+
+knowledge_base:
+  path: "baselines/introplan/data/nav_calibration.json"
+  top_k: 3
+
+output:
+  save_dir: "outputs/always_ask_baseline"
+  save_decisions: true
+  save_predictor: false

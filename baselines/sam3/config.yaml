@@ -1,0 +1,65 @@
+# SAM3 baseline configuration
+# Terrain concept vocabulary extended from the navigation_stack defaults
+# to cover all 5 uncertainty types in our research framework.
+# Mapping to RUGD 24-class IDs is in data_loader.py::RUGD_CLASS_MAP.
+
+nav_stack_path: "/Users/julih/Documents/navigation_stack"
+
+sam3:
+  # HuggingFace model ID — requires approved access at huggingface.co/facebook/sam3
+  hf_model_id: "facebook/sam3"
+  # "auto" selects CUDA > MPS (Apple Silicon) > CPU automatically
+  device: "auto"
+  detection_threshold: 0.5
+
+  # Terrain concept vocabulary — 13 classes.
+  # Types 1-4 from our uncertainty framework are noted inline.
+  queries:
+    - "sidewalk"          # safe path
+    - "crosswalk"         # safe path
+    - "road"              # safe path
+    - "dirt"              # rough surface (Type 2)
+    - "vegetation"        # off-path obstacle (Type 2)
+    - "grass"             # uncertain surface (Type 2 / Type 4)
+    - "gravel"            # rough surface — triggers Type 4 preference query
+    - "puddle"            # wet hazard — triggers Type 2/3 depending on depth
+    - "wet surface"       # slippery — triggers Type 3 if steep
+    - "cracked pavement"  # accessibility hazard — triggers Type 2
+    - "curb"              # step hazard (Type 2)
+    - "mud"               # impassable for mobility devices (Type 3)
+    - "slope"             # incline — triggers Type 4 preference query
+
+  # BGR color per class (index matches queries list above)
+  color_map:
+    - [255, 255,   0]  # sidewalk     — yellow
+    - [255, 155,   0]  # crosswalk    — orange
+    - [  0,   0, 255]  # road         — red
+    - [  0, 255,   0]  # dirt         — green
+    - [  0, 128,   0]  # vegetation   — dark green
+    - [144, 238, 144]  # grass        — light green
+    - [128, 128, 128]  # gravel       — gray
+    - [  0, 191, 255]  # puddle       — deep sky blue
+    - [135, 206, 235]  # wet surface  — sky blue
+    - [255,   0, 255]  # cracked pavement — magenta
+    - [255, 165,   0]  # curb         — orange
+    - [101,  67,  33]  # mud          — brown
+    - [255,  69,   0]  # slope        — red-orange
+
+# RUGD dataset paths — override via .env RUGD_DATA_PATH
+rugd:
+  data_path: "/Users/julih/Documents/datasets/rugd"
+  # dataset-tools downloads into this structure:
+  #   {data_path}/train/img/   + {data_path}/train/ann/
+  #   {data_path}/val/img/     + {data_path}/val/ann/
+  #   {data_path}/test/img/    + {data_path}/test/ann/
+  splits: ["train", "val", "test"]
+  image_ext: ".png"
+  annotation_ext: ".png"
+
+# Output settings
+output:
+  save_dir: "./outputs/sam3_baseline"
+  save_masks: true
+  save_visualization: true
+  # If RUGD GT is available, also compute mIoU
+  compute_miou: true

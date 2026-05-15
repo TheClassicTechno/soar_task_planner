@@ -1,0 +1,342 @@
+{
+  "summary": {
+    "n_images": 50,
+    "mean_iou": 0.16713668753227753,
+    "per_class_iou": {
+      "sidewalk": 0.01888741183278335,
+      "crosswalk": 0.0,
+      "road": 0.0,
+      "dirt": 0.10692789465436497,
+      "vegetation": 0.7113713679915874,
+      "grass": 0.8417826504186227,
+      "gravel": 0.0689117557974,
+      "puddle": 0.0,
+      "wet surface": 0.0,
+      "cracked pavement": 0.4248958572248496,
+      "curb": 0.0,
+      "mud": 0.0,
+      "slope": 0.0
+    },
+    "mean_coverage": 0.6512651162790697,
+    "mean_fps": 0.02053196167379468,
+    "split": "val",
+    "n_queries": 13,
+    "queries": [
+      "sidewalk",
+      "crosswalk",
+      "road",
+      "dirt",
+      "vegetation",
+      "grass",
+      "gravel",
+      "puddle",
+      "wet surface",
+      "cracked pavement",
+      "curb",
+      "mud",
+      "slope"
+    ]
+  },
+  "per_image": [
+    {
+      "name": "park-1_00001",
+      "inference_time_s": 50.2461220840014,
+      "n_detections": 10,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00006",
+      "inference_time_s": 48.892894292001074,
+      "n_detections": 10,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00011",
+      "inference_time_s": 48.429483334000906,
+      "n_detections": 10,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00016",
+      "inference_time_s": 47.8630179160009,
+      "n_detections": 10,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00021",
+      "inference_time_s": 49.41929533399889,
+      "n_detections": 8,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00026",
+      "inference_time_s": 49.188978333000705,
+      "n_detections": 10,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00031",
+      "inference_time_s": 48.94905595899945,
+      "n_detections": 10,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00036",
+      "inference_time_s": 49.47176737500013,
+      "n_detections": 9,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00041",
+      "inference_time_s": 48.86592308300169,
+      "n_detections": 10,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00046",
+      "inference_time_s": 49.486408292001215,
+      "n_detections": 8,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00051",
+      "inference_time_s": 48.499458250000316,
+      "n_detections": 7,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00056",
+      "inference_time_s": 48.58229949999986,
+      "n_detections": 6,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00061",
+      "inference_time_s": 49.67339329200149,
+      "n_detections": 7,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00066",
+      "inference_time_s": 49.03888299999926,
+      "n_detections": 7,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00071",
+      "inference_time_s": 48.75394299999971,
+      "n_detections": 6,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00076",
+      "inference_time_s": 50.02257145900148,
+      "n_detections": 8,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00081",
+      "inference_time_s": 48.35129695900105,
+      "n_detections": 8,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00086",
+      "inference_time_s": 48.3480259579992,
+      "n_detections": 9,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00091",
+      "inference_time_s": 48.544597582998904,
+      "n_detections": 11,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00096",
+      "inference_time_s": 48.89455037500011,
+      "n_detections": 10,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00101",
+      "inference_time_s": 49.33034637499986,
+      "n_detections": 9,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00106",
+      "inference_time_s": 48.136761957999624,
+      "n_detections": 9,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00111",
+      "inference_time_s": 47.76001120799992,
+      "n_detections": 7,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00116",
+      "inference_time_s": 50.535527,
+      "n_detections": 7,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00121",
+      "inference_time_s": 48.26395212499847,
+      "n_detections": 5,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00126",
+      "inference_time_s": 48.50983274999999,
+      "n_detections": 5,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00131",
+      "inference_time_s": 48.08867845799978,
+      "n_detections": 6,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00136",
+      "inference_time_s": 48.247730708000745,
+      "n_detections": 8,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00141",
+      "inference_time_s": 49.53210116699847,
+      "n_detections": 9,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00146",
+      "inference_time_s": 48.46442674999889,
+      "n_detections": 7,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00151",
+      "inference_time_s": 48.44423774999996,
+      "n_detections": 8,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00156",
+      "inference_time_s": 48.72178770899882,
+      "n_detections": 7,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00161",
+      "inference_time_s": 48.27212666699961,
+      "n_detections": 5,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00166",
+      "inference_time_s": 48.26150820800103,
+      "n_detections": 6,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00171",
+      "inference_time_s": 48.85503674999927,
+      "n_detections": 5,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00176",
+      "inference_time_s": 48.09436541700052,
+      "n_detections": 6,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00181",
+      "inference_time_s": 48.05146620800042,
+      "n_detections": 6,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00186",
+      "inference_time_s": 48.25289024999984,
+      "n_detections": 6,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00191",
+      "inference_time_s": 48.10074929199982,
+      "n_detections": 6,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00196",
+      "inference_time_s": 48.094464290999895,
+      "n_detections": 7,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00201",
+      "inference_time_s": 48.26914229199974,
+      "n_detections": 6,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00206",
+      "inference_time_s": 49.684324333000404,
+      "n_detections": 6,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00211",
+      "inference_time_s": 48.579317666999486,
+      "n_detections": 6,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00216",
+      "inference_time_s": 48.33229125000071,
+      "n_detections": 6,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00221",
+      "inference_time_s": 48.452417124999556,
+      "n_detections": 6,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00226",
+      "inference_time_s": 48.65248904100008,
+      "n_detections": 6,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00231",
+      "inference_time_s": 49.58522858300057,
+      "n_detections": 8,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00236",
+      "inference_time_s": 48.056475583000065,
+      "n_detections": 7,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00241",
+      "inference_time_s": 48.04765262500041,
+      "n_detections": 6,
+      "has_gt": true
+    },
+    {
+      "name": "park-1_00246",
+      "inference_time_s": 48.02830725000058,
+      "n_detections": 5,
+      "has_gt": true
+    }
+  ]
+}

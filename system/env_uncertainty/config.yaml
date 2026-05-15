@@ -1,0 +1,38 @@
+# Environmental Uncertainty System Configuration
+
+# Decision thresholds
+decision:
+  # Robot asks when unknown_coverage >= this fraction (even if a safe path exists)
+  ask_unknown_threshold: 0.10
+  # Robot stops (does not even ask, just halts) when unknown_coverage >= this
+  stop_unknown_threshold: 0.80
+  # Robot asks when any on-path scene-graph node has Dirichlet semantic entropy
+  # above this value.  Uniform entropy for K=20 classes is log(20)≈3.0;
+  # 1.5 corresponds to roughly equal probability spread across ~4-5 classes.
+  entropy_ask_threshold: 1.5
+
+# SAM3 + SAM2 detector settings
+detector:
+  overlap_threshold: 0.30        # SAM2 region is unknown if SAM3 overlap < this
+  min_unknown_pixel_fraction: 0.02   # Ignore unknown regions smaller than 2% of image
+
+# Trajectory generation settings
+trajectory:
+  n_waypoints: 20               # Number of points to sample along each trajectory
+
+# Question generation
+question:
+  mode: "template"              # "template" or "llm"
+  # If mode is "llm", the runner must receive an LLMInterface instance.
+  # LLM mode falls back to template if the LLM call fails.
+
+# SAM models (only used when running with real models)
+sam3:
+  hf_model_id: "facebook/sam3"
+  device: "auto"
+  detection_threshold: 0.5
+
+sam2:
+  hf_model_id: "facebook/sam2-hiera-large"
+  device: "auto"
+  points_per_side: 32           # SAM2 'segment everything' grid density
