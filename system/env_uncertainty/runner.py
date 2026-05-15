@@ -91,6 +91,7 @@ class EnvironmentalUncertaintyRunner:
         self._ask_threshold = decision_cfg.get("ask_unknown_threshold", 0.10)
         self._stop_threshold = decision_cfg.get("stop_unknown_threshold", 0.80)
         self._entropy_threshold = decision_cfg.get("entropy_ask_threshold", 1.5)
+        self._lcb_stop_threshold = decision_cfg.get("lcb_stop_threshold", 0.20)
 
         traj_cfg = self._config.get("trajectory", {})
         self._n_waypoints = traj_cfg.get("n_waypoints", 20)
@@ -145,7 +146,7 @@ class EnvironmentalUncertaintyRunner:
         ]
 
         # Step 5: Select best trajectory using GP LCB (pessimistic safety ranking)
-        best = self._select_best_trajectory_lcb(scored_trajectories, h, w)
+        best, best_lcb = self._select_best_trajectory_lcb(scored_trajectories, h, w)
 
         # Resolve on-path scene-graph nodes for entropy check (Steps 3–5 output)
         on_path_nodes: List[TerrainNode] = []
@@ -154,7 +155,7 @@ class EnvironmentalUncertaintyRunner:
 
         # Step 4: Determine robot action
         action, question = self._decide_action(
-            result, scored_trajectories, best, on_path_nodes
+            result, scored_trajectories, best, on_path_nodes, best_lcb=best_lcb
         )
 
         return EnvUncertaintyDecision(
@@ -256,21 +257,26 @@ class EnvironmentalUncertaintyRunner:
         trajectories: List[Trajectory],
         height: int,
         width: int,
-    ) -> Optional[Trajectory]:
+    ) -> tuple:
         """
         Select the safest trajectory by GP LCB score.
 
         Only considers trajectories where passes_through_unknown=False.
-        Among those, returns the one with the highest min LCB over its waypoints.
-        Returns None if every trajectory passes through unknown (triggers ASK).
+        Returns (best_trajectory, best_lcb_score).  Both are None when every
+        trajectory passes through unknown (triggers ASK in _decide_action).
+
+        Scores each safe trajectory once and keeps the winning score so
+        _decide_action can apply the LCB-threshold STOP without a second GP call.
         """
         safe = [t for t in trajectories if not t.passes_through_unknown]
         if not safe:
-            return None
-        return max(
-            safe,
-            key=lambda t: self._gp_map.score_trajectory_lcb(t.waypoints, height, width),
-        )
+            return None, None
+        scored = [
+            (t, self._gp_map.score_trajectory_lcb(t.waypoints, height, width))
+            for t in safe
+        ]
+        best, best_lcb = max(scored, key=lambda ts: ts[1])
+        return best, best_lcb
 
     def _decide_action(
         self,
@@ -278,6 +284,7 @@ class EnvironmentalUncertaintyRunner:
         trajectories: List[Trajectory],
         best_trajectory: Optional[Trajectory],
         on_path_nodes: Optional[List[TerrainNode]] = None,
+        best_lcb: Optional[float] = None,
     ):
         """
         Apply decision thresholds to pick PROCEED, ASK, or STOP.
@@ -290,6 +297,10 @@ class EnvironmentalUncertaintyRunner:
                              scene graph.  When any node's semantic_entropy()
                              exceeds self._entropy_threshold the robot must ASK
                              even if unknown_coverage looks acceptable.
+            best_lcb:        Pre-computed GP LCB score for best_trajectory.
+                             When this falls below lcb_stop_threshold and the GP
+                             has observations, the robot STOPs on known-terrain
+                             danger (e.g., ice, deep mud) even at low coverage.
 
         Returns:
             (action_str, question_str_or_None)
@@ -316,6 +327,17 @@ class EnvironmentalUncertaintyRunner:
         ):
             question = self._question_gen.generate(result, trajectories, top_k_classes=top_k)
             return "ASK", question
+
+        # GP LCB-based STOP: best safe path has dangerously low traversability.
+        # Guard: n_observations > 0 prevents false STOPs from the uninformative
+        # prior (prior LCB = 0.5 - 1.5*0.4 = -0.1 < threshold without any data).
+        if (
+            best_lcb is not None
+            and self._gp_map.n_observations > 0
+            and best_lcb < self._lcb_stop_threshold
+        ):
+            question = self._question_gen.generate(result, trajectories, top_k_classes=top_k)
+            return "STOP", question
 
         # No unknown regions, or unknown area is small and off-path → PROCEED
         if not result.has_unknown or (
