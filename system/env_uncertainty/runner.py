@@ -23,8 +23,9 @@ with the nav_env_test.json evaluation schema.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import yaml
 
 from system.env_uncertainty.detector import DetectionResult, EnvironmentalUncertaintyDetector
@@ -50,6 +51,7 @@ class EnvUncertaintyDecision:
     question:             the generated question if robot_action == "ASK", else None
     n_known_regions:      number of SAM3-identified regions
     n_unknown_regions:    number of SAM2 residual unknown regions
+    unknown_world_coords: world coordinates (x, y) of unknown region centroids
     """
 
     scene_id: str
@@ -61,6 +63,7 @@ class EnvUncertaintyDecision:
     question: Optional[str]
     n_known_regions: int
     n_unknown_regions: int
+    unknown_world_coords: Optional[List[Tuple[float, float]]] = None
 
 
 class EnvironmentalUncertaintyRunner:
@@ -111,6 +114,10 @@ class EnvironmentalUncertaintyRunner:
         image,
         scene_id: str = "scene",
         scene_graph: Optional[SceneGraph] = None,
+        robot_pose: Optional[Any] = None,
+        camera_params: Optional[Any] = None,
+        T_cam_to_base: Optional[np.ndarray] = None,
+        depth_map: Optional[np.ndarray] = None,
     ) -> EnvUncertaintyDecision:
         """
         Run the full pipeline on one image.
@@ -123,6 +130,14 @@ class EnvironmentalUncertaintyRunner:
                           trajectory are checked for high Dirichlet semantic
                           entropy and can trigger ASK independently of unknown
                           coverage.
+            robot_pose:   Optional (x, y, theta) robot pose in world frame.
+                          If provided, unknown region centroids will be
+                          transformed to world coordinates (Step 10).
+            camera_params: Optional CameraParams for coordinate transform.
+            T_cam_to_base: Optional 4x4 transformation matrix.
+            depth_map:    Optional (H, W) depth image in meters.
+                          If provided, used for per-pixel depth in coordinate
+                          transform. If None, uses default_depth from config.
 
         Returns:
             EnvUncertaintyDecision with action and optional question.
@@ -158,6 +173,13 @@ class EnvironmentalUncertaintyRunner:
             result, scored_trajectories, best, on_path_nodes, best_lcb=best_lcb
         )
 
+        # Step 10: Transform unknown region centroids to world coordinates
+        unknown_world_coords = None
+        if robot_pose is not None and camera_params is not None and result.unknown_regions:
+            unknown_world_coords = self._compute_world_coords(
+                result, robot_pose, camera_params, T_cam_to_base, depth_map
+            )
+
         return EnvUncertaintyDecision(
             scene_id=scene_id,
             has_unknown=result.has_unknown,
@@ -168,7 +190,83 @@ class EnvironmentalUncertaintyRunner:
             question=question,
             n_known_regions=len(result.known_regions),
             n_unknown_regions=len(result.unknown_regions),
+            unknown_world_coords=unknown_world_coords,
         )
+
+    def _compute_world_coords(
+        self,
+        result: DetectionResult,
+        robot_pose: Any,
+        camera_params: Any,
+        T_cam_to_base: Optional[np.ndarray] = None,
+        depth_map: Optional[np.ndarray] = None,
+    ) -> List[Tuple[float, float]]:
+        """
+        Transform unknown region centroids to world coordinates (Step 10).
+
+        Args:
+            result: DetectionResult with unknown regions
+            robot_pose: (x, y, theta) or RobotPose in world frame
+            camera_params: CameraParams with K matrix
+            T_cam_to_base: Optional 4x4 transform matrix
+            depth_map: Optional (H, W) depth image in meters.
+                       If provided, depth for each pixel is read from this map.
+                       If None, uses default_depth from config.
+
+        Returns:
+            List of (world_x, world_y) tuples for each unknown region
+        """
+        from system.env_uncertainty.coordinate_transform import (
+            RobotPose,
+            create_default_transform,
+            create_default_camera_params,
+            region_centroid_to_world,
+        )
+
+        coord_cfg = self._config.get("coordinate", {})
+        default_depth = coord_cfg.get("default_depth", 2.0)
+        camera_height = coord_cfg.get("camera_height", 0.3)
+
+        if T_cam_to_base is None:
+            T_cam_to_base = create_default_transform(camera_height=camera_height)
+
+        if isinstance(robot_pose, tuple):
+            pose = RobotPose(x=robot_pose[0], y=robot_pose[1], theta=robot_pose[2])
+        else:
+            pose = robot_pose
+
+        if camera_params is None:
+            coord_cfg = self._config.get("coordinate", {})
+            hfov = coord_cfg.get("camera_hfov", 90.0)
+            camera_params = create_default_camera_params(640, 480, hfov)
+            K = camera_params.K
+        elif hasattr(camera_params, 'K'):
+            K = camera_params.K
+        elif isinstance(camera_params, np.ndarray):
+            K = camera_params
+        else:
+            raise ValueError(f"camera_params must be CameraParams, np.ndarray, or None, got {type(camera_params)}")
+
+        world_coords = []
+        for region in result.unknown_regions:
+            depth = default_depth
+            if depth_map is not None:
+                region_depths = depth_map[region.mask]
+                valid_depths = region_depths[(region_depths > 0) & np.isfinite(region_depths)]
+                if len(valid_depths) > 0:
+                    depth = float(np.median(valid_depths))
+
+            coord = region_centroid_to_world(
+                mask=region.mask,
+                depth=depth,
+                K=K,
+                T_cam_to_base=T_cam_to_base,
+                robot_pose=pose,
+            )
+            if coord is not None:
+                world_coords.append(coord)
+
+        return world_coords
 
     def run_evaluation(self, test_cases: List[Dict]) -> Dict:
         """

@@ -40,3 +40,9 @@ sam2:
   hf_model_id: "facebook/sam2-hiera-large"
   device: "auto"
   points_per_side: 32           # SAM2 'segment everything' grid density
+
+# Coordinate transform (Step 10)
+coordinate:
+  default_depth: 2.0            # Default depth in meters for unknown regions
+  camera_height: 0.3            # Camera height above robot base (meters)
+  camera_hfov: 90.0             # Camera horizontal field of view (degrees)

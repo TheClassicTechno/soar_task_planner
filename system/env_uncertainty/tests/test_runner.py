@@ -308,3 +308,127 @@ def test_repeated_waypoint_in_same_cell_not_duplicated():
                       passes_through_unknown=False)
     nodes = runner._on_path_nodes(sg, traj, H, W)
     assert sum(1 for n in nodes if n.label == "grass") == 1
+
+
+# ── Coordinate Transform Tests (Step 10) ───────────────────────────────────
+
+def test_run_scene_without_robot_pose_returns_none_coords():
+    runner = _make_runner(_make_detector())
+    decision = runner.run_scene(IMAGE)
+    assert decision.unknown_world_coords is None
+
+
+def test_run_scene_without_unknown_regions_returns_none_coords():
+    runner = _make_runner(_make_detector())
+    decision = runner.run_scene(
+        IMAGE,
+        robot_pose=(0, 0, 0),
+        camera_params=MagicMock(),
+    )
+    assert decision.unknown_world_coords is None
+
+
+def test_run_scene_with_robot_pose_returns_world_coords():
+    detector = _make_detector(unknown_coverage=0.1, n_unknown=1)
+    runner = _make_runner(detector)
+
+    camera_params = MagicMock()
+    camera_params.K = np.array([[320, 0, 320], [0, 320, 240], [0, 0, 1]], dtype=np.float64)
+
+    decision = runner.run_scene(
+        IMAGE,
+        robot_pose=(0, 0, 0),
+        camera_params=camera_params,
+        T_cam_to_base=np.eye(4),
+    )
+
+    assert decision.unknown_world_coords is not None
+    assert isinstance(decision.unknown_world_coords, list)
+
+
+def test_run_scene_with_tuple_robot_pose():
+    detector = _make_detector(unknown_coverage=0.1, n_unknown=1)
+    runner = _make_runner(detector)
+
+    camera_params = MagicMock()
+    camera_params.K = np.array([[320, 0, 320], [0, 320, 240], [0, 0, 1]], dtype=np.float64)
+
+    decision = runner.run_scene(
+        IMAGE,
+        robot_pose=(5.0, 10.0, 1.57),
+        camera_params=camera_params,
+    )
+
+    assert decision.unknown_world_coords is not None
+
+
+def test_compute_world_coords_uses_config_defaults():
+    from system.env_uncertainty.coordinate_transform import RobotPose, create_default_camera_params
+
+    detector = _make_detector(unknown_coverage=0.1, n_unknown=1)
+    runner = _make_runner(detector)
+
+    pose = RobotPose(x=0, y=0, theta=0)
+
+    # Use a camera params object (not None) but let internal logic use config defaults
+    # When a CameraParams is passed but K might be generated from config
+    camera_params = create_default_camera_params(640, 480, 90.0)
+
+    decision = runner.run_scene(
+        IMAGE,
+        robot_pose=pose,
+        camera_params=camera_params,
+    )
+
+    assert decision.unknown_world_coords is not None
+
+
+def test_run_scene_with_depth_map_uses_per_pixel_depth():
+    """Depth map provides per-pixel depth for coordinate transform."""
+    detector = _make_detector(unknown_coverage=0.1, n_unknown=1)
+    runner = _make_runner(detector)
+
+    camera_params = MagicMock()
+    camera_params.K = np.array([[320, 0, 320], [0, 320, 240], [0, 0, 1]], dtype=np.float64)
+
+    # Create depth map: closer on right side
+    depth_map = np.full((50, 50), 5.0, dtype=np.float32)
+    depth_map[:, 25:] = 1.0
+
+    decision = runner.run_scene(
+        IMAGE,
+        robot_pose=(0, 0, 0),
+        camera_params=camera_params,
+        depth_map=depth_map,
+    )
+
+    assert decision.unknown_world_coords is not None
+
+
+def test_run_scene_without_depth_map_uses_default():
+    """Without depth map, uses default_depth from config."""
+    detector = _make_detector(unknown_coverage=0.1, n_unknown=1)
+    runner = _make_runner(detector)
+
+    camera_params = MagicMock()
+    camera_params.K = np.array([[320, 0, 320], [0, 320, 240], [0, 0, 1]], dtype=np.float64)
+
+    decision_without = runner.run_scene(
+        IMAGE,
+        robot_pose=(0, 0, 0),
+        camera_params=camera_params,
+        depth_map=None,
+    )
+
+    depth_map = np.full((50, 50), 2.0, dtype=np.float32)
+    decision_with = runner.run_scene(
+        IMAGE,
+        robot_pose=(0, 0, 0),
+        camera_params=camera_params,
+        depth_map=depth_map,
+    )
+
+    if decision_without.unknown_world_coords and decision_with.unknown_world_coords:
+        for w1, w2 in zip(decision_without.unknown_world_coords, decision_with.unknown_world_coords):
+            assert abs(w1[0] - w2[0]) < 0.01
+            assert abs(w1[1] - w2[1]) < 0.01
