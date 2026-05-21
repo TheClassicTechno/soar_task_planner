@@ -3,11 +3,11 @@ End-to-end Environmental Uncertainty Runner.
 
 Orchestrates the full pipeline for one scene:
   1. Detect unknown regions (EnvironmentalUncertaintyDetector)
-  2. Build candidate trajectories (TrajectoryGenerator)
+  2. Build candidate trajectories (TrajectoryGenerator or GoalDirectedTrajectoryGenerator)
   3. Score trajectories against traversability map
   4. Select best trajectory or decide to ASK
   5. Generate a clarification question if needed
-  6. Apply user feedback and re-score trajectories (optional second pass)
+  6. Apply user feedback and re-score trajectories (run_with_feedback)
 
 Decision logic:
   - PROCEED: at least one trajectory avoids all unknown regions AND all on-path
@@ -17,6 +17,16 @@ Decision logic:
              through unknown, OR any on-path node's semantic_entropy() exceeds
              entropy_ask_threshold (the robot is uncertain about terrain class).
   - STOP:    unknown_coverage >= stop_unknown_threshold (no safe path exists).
+
+Goal-directed trajectories (D15, May 19 mentor requirement):
+  Pass goal_pixel=(y, x) to run_scene() or run_with_feedback() to activate
+  GoalDirectedTrajectoryGenerator. Without a goal, falls back to the original
+  fixed-geometry TrajectoryGenerator.
+
+Replan after feedback (D18, May 19 mentor requirement):
+  run_with_feedback() runs the pipeline, incorporates user text feedback into
+  the GP, then re-runs run_scene() on the same image with updated beliefs.
+  Returns (initial_decision, replanned_decision) so callers can see both.
 
 Results are returned as EnvUncertaintyDecision objects, which are compatible
 with the nav_env_test.json evaluation schema.
@@ -29,12 +39,24 @@ import numpy as np
 import yaml
 
 from system.env_uncertainty.detector import DetectionResult, EnvironmentalUncertaintyDetector
-from system.env_uncertainty.gp_traversability import GPTraversabilityMap
-from system.env_uncertainty.map_updater import MapUpdater
+from system.env_uncertainty.gp_traversability import GPTraversabilityMap, WorldGPTraversabilityMap
+from system.env_uncertainty.map_updater import MapUpdater, parse_user_response_rich
 from system.env_uncertainty.question_generator import QuestionGenerator
-from system.env_uncertainty.scene_graph import SceneGraph, TerrainNode
-from system.env_uncertainty.trajectory import Trajectory, TrajectoryGenerator
+from system.env_uncertainty.scene_graph import SceneGraph, TerrainNode, WorldSceneGraph
+from system.env_uncertainty.terrain_knowledge import PersistentTerrainKnowledge
+from system.env_uncertainty.trajectory import (
+    Trajectory,
+    TrajectoryGenerator,
+    GoalDirectedTrajectoryGenerator,
+)
 from system.env_uncertainty.traversability import TraversabilityMap
+from system.env_uncertainty.user_profile import DEFAULT_PROFILE, UserProfile
+from system.env_uncertainty.world_coords import (
+    CameraMount,
+    RobotPose,
+    mask_centroids_to_world,
+    pixel_to_world,
+)
 
 
 @dataclass
@@ -108,6 +130,97 @@ class EnvironmentalUncertaintyRunner:
         self._question_gen = QuestionGenerator(mode=q_mode, llm=llm)
         self._map_updater = MapUpdater()
         self._gp_map = GPTraversabilityMap()
+        # Cross-frame semantic knowledge: survives between run_scene() calls so
+        # that confirmed labels ("grass is safe") are applied to new frames.
+        self._terrain_knowledge = PersistentTerrainKnowledge()
+
+        # World-coordinate GP and scene graph (multi-frame mode).
+        # Populated only when run_scene_with_pose() is used.
+        # Camera intrinsics default to RealSense D435i at image resolution.
+        self._world_gp = WorldGPTraversabilityMap()
+        self._world_scene_graph = WorldSceneGraph()
+        self._camera_mount = CameraMount()   # overridable via set_camera_mount()
+        # Focal length / principal point — updated per-frame from image shape.
+        self._fx: float = 615.0
+        self._fy: float = 615.0
+        self._cx: float = 320.0
+        self._cy: float = 240.0
+
+    @property
+    def terrain_knowledge(self) -> PersistentTerrainKnowledge:
+        """Cross-frame semantic terrain knowledge (persists between frames)."""
+        return self._terrain_knowledge
+
+    @property
+    def world_gp(self) -> WorldGPTraversabilityMap:
+        """World-coordinate GP (persists across frames in multi-pose mode)."""
+        return self._world_gp
+
+    @property
+    def world_scene_graph(self) -> WorldSceneGraph:
+        """World-coordinate scene graph (true multi-image terrain map)."""
+        return self._world_scene_graph
+
+    def set_camera_mount(self, mount: CameraMount) -> None:
+        """
+        Override the camera mounting parameters used for pixel→world projection.
+
+        Call this once before the first run_scene_with_pose() call when the robot's
+        camera height and pitch differ from the CameraMount defaults (h=0.5m, p=15°).
+
+        Args:
+            mount: CameraMount with actual robot camera height_m and pitch_rad.
+        """
+        self._camera_mount = mount
+
+    def set_camera_intrinsics(
+        self, fx: float, fy: float, cx: float, cy: float
+    ) -> None:
+        """
+        Override camera intrinsics used for pixel→world projection.
+
+        Defaults are for a RealSense D435i at 640×480. Call this if your camera
+        has different intrinsics (e.g. wide-angle lens, higher resolution).
+
+        Args:
+            fx, fy: Focal lengths in pixels.
+            cx, cy: Principal point in pixels.
+        """
+        self._fx = fx
+        self._fy = fy
+        self._cx = cx
+        self._cy = cy
+
+    def reset_frame_state(self) -> None:
+        """
+        Clear the GP posterior between frames (multi-image sequential mode).
+
+        Resets ONLY the per-frame GP (pixel-relative observations become stale
+        when the robot moves).  Does NOT reset PersistentTerrainKnowledge —
+        cross-frame label beliefs ("grass is safe") intentionally carry forward.
+
+        Call this between run_scene() calls when the robot has moved significantly
+        between frames and image-relative GP coordinates no longer correspond to
+        the same real-world terrain. Without a call here, observations from prior
+        frames accumulate in the GP with image-relative coordinates — meaning the
+        same pixel position in two frames is treated as the same world location,
+        which is incorrect when the robot has moved.
+
+        When NOT to call this: when running multiple views of the same scene
+        (camera jitter, slight rotation) where image coordinates are stable.
+        When to call this: sequential frames from a moving robot.
+        """
+        self._gp_map.reset()
+
+    def reset_all_knowledge(self) -> None:
+        """
+        Clear BOTH the per-frame GP and cross-frame terrain knowledge.
+
+        Use this when starting a completely new navigation task where prior
+        label-level beliefs should not carry over (e.g. different environment).
+        """
+        self._gp_map.reset()
+        self._terrain_knowledge.reset()
 
     def run_scene(
         self,
@@ -118,6 +231,8 @@ class EnvironmentalUncertaintyRunner:
         camera_params: Optional[Any] = None,
         T_cam_to_base: Optional[np.ndarray] = None,
         depth_map: Optional[np.ndarray] = None,
+        goal_pixel: Optional[Tuple[int, int]] = None,
+        user_profile: Optional[UserProfile] = None,
     ) -> EnvUncertaintyDecision:
         """
         Run the full pipeline on one image.
@@ -138,6 +253,14 @@ class EnvironmentalUncertaintyRunner:
             depth_map:    Optional (H, W) depth image in meters.
                           If provided, used for per-pixel depth in coordinate
                           transform. If None, uses default_depth from config.
+            goal_pixel:   Optional (y, x) navigation goal in image coordinates.
+                          When given, uses GoalDirectedTrajectoryGenerator so all
+                          candidate paths lead toward the goal (May 19 mentor req).
+                          When None, falls back to fixed-geometry TrajectoryGenerator.
+            user_profile: Controls question verbosity and format (F27). Options:
+                          verbosity="terse"|"standard"|"verbose",
+                          preferred_format="question"|"option_list"|"statement".
+                          Uses DEFAULT_PROFILE (standard verbosity) when None.
 
         Returns:
             EnvUncertaintyDecision with action and optional question.
@@ -152,25 +275,23 @@ class EnvironmentalUncertaintyRunner:
         # Step 4: Seed GP with traversability observations from known regions
         self._seed_gp_from_detection(result, h, w)
 
-        # Step 2: Generate and score candidate trajectories (passes_through_unknown flag)
-        gen = TrajectoryGenerator(h, w, n_waypoints=self._n_waypoints)
-        raw_trajectories = gen.generate_trajectories()
-        scored_trajectories = [
-            gen.score_trajectory(t, result.traversability_map)
-            for t in raw_trajectories
-        ]
+        # Step 5: Generate and score candidate trajectories
+        # Goal-directed when goal_pixel is supplied; fixed-geometry otherwise.
+        raw_trajectories = self._generate_trajectories(h, w, goal_pixel)
+        scored_trajectories = self._score_trajectories(raw_trajectories, result, h, w, goal_pixel)
 
-        # Step 5: Select best trajectory using GP LCB (pessimistic safety ranking)
+        # Select best trajectory using GP LCB (pessimistic safety ranking)
         best, best_lcb = self._select_best_trajectory_lcb(scored_trajectories, h, w)
 
-        # Resolve on-path scene-graph nodes for entropy check (Steps 3–5 output)
+        # Resolve on-path scene-graph nodes for Dirichlet entropy check
         on_path_nodes: List[TerrainNode] = []
         if scene_graph is not None and best is not None:
             on_path_nodes = self._on_path_nodes(scene_graph, best, h, w)
 
-        # Step 4: Determine robot action
+        # Step 6: Determine robot action
         action, question = self._decide_action(
-            result, scored_trajectories, best, on_path_nodes, best_lcb=best_lcb
+            result, scored_trajectories, best, on_path_nodes,
+            best_lcb=best_lcb, user_profile=user_profile,
         )
 
         # Step 10: Transform unknown region centroids to world coordinates
@@ -268,6 +389,259 @@ class EnvironmentalUncertaintyRunner:
 
         return world_coords
 
+    def run_with_feedback(
+        self,
+        image,
+        user_response: str,
+        scene_id: str = "scene",
+        scene_graph: Optional[SceneGraph] = None,
+        goal_pixel: Optional[Tuple[int, int]] = None,
+        user_profile: Optional[UserProfile] = None,
+    ) -> Tuple[EnvUncertaintyDecision, EnvUncertaintyDecision]:
+        """
+        Run the full pipeline, incorporate user feedback, then replan (D18).
+
+        This implements the complete ask→feedback→replan loop:
+          1. run_scene()           → initial decision (usually ASK)
+          2. parse_user_response() → extract terrain label, confidence, safety
+          3. GP apply_user_feedback() → update traversability at uncertain waypoints
+          4. run_scene() again     → replanned decision with updated GP beliefs
+
+        Args:
+            image:         (H, W, 3) uint8 numpy array (RGB).
+            user_response: Free-text user answer (e.g. "it's wet grass, be careful").
+            scene_id:      Identifier for logging.
+            scene_graph:   Optional SceneGraph for Dirichlet entropy checks.
+            goal_pixel:    Optional (y, x) navigation goal; activates goal-directed paths.
+
+        Returns:
+            (initial_decision, replanned_decision) — both EnvUncertaintyDecision.
+            Compare robot_action in both to see whether user feedback resolved the issue.
+        """
+        import numpy as np
+        image_arr = np.asarray(image)
+        h, w = image_arr.shape[:2]
+
+        # Step 1: Initial pipeline run
+        initial = self.run_scene(image_arr, scene_id, scene_graph, goal_pixel, user_profile)
+
+        # Step 8: Parse user free-text response → structured output
+        parsed = parse_user_response_rich(user_response)
+
+        # Step 9: GP Bayesian update at uncertain waypoints on the best trajectory.
+        # Updates only the pixels the robot was actually uncertain about — area-specific,
+        # not semantic-category-wide (May 19 mentor: local updates are the right approach).
+        #
+        # When initial.best_trajectory is None (all paths passed through unknown terrain),
+        # fall back to the direct trajectory so the GP still receives the user's safety
+        # judgment. On replan (Step 10), _select_best_trajectory_lcb will accept this
+        # path if its updated LCB now meets the safety threshold.
+        update_trajectory = initial.best_trajectory
+        if update_trajectory is None:
+            raw_trajs = self._generate_trajectories(h, w, goal_pixel)
+            # Use the direct path (first trajectory) — it's the shortest route to goal.
+            update_trajectory = raw_trajs[0] if raw_trajs else None
+
+        if update_trajectory is not None:
+            # Primary update: waypoints on the selected trajectory (path-specific).
+            for wy, wx in update_trajectory.waypoints:
+                self._gp_map.apply_user_feedback(
+                    pixel_y=wy,
+                    pixel_x=wx,
+                    is_traversable=parsed.is_traversable,
+                    height=h,
+                    width=w,
+                )
+
+            # Region-mask update: sample N evenly-spaced pixels from EACH unknown
+            # region and apply the user's answer to them.  The robot asked about a
+            # specific region; the user's response applies to the whole visible region,
+            # not just the 20 waypoints the trajectory happened to cross.
+            # Re-running detection is deterministic and fast (~10 ms), so we do it
+            # here rather than threading the detection result through run_scene().
+            N_REGION_SAMPLES = 9  # 3×3 interior coverage per unknown region
+            fresh_detection: DetectionResult = self._detector.detect(np.asarray(image_arr))
+            for region in fresh_detection.unknown_regions:
+                mask = np.asarray(region.mask)
+                ys, xs = np.where(mask)
+                if len(ys) == 0:
+                    continue
+                indices = np.linspace(0, len(ys) - 1, N_REGION_SAMPLES, dtype=int)
+                for idx in indices:
+                    self._gp_map.apply_user_feedback(
+                        pixel_y=int(ys[idx]),
+                        pixel_x=int(xs[idx]),
+                        is_traversable=parsed.is_traversable,
+                        height=h,
+                        width=w,
+                    )
+
+        # Cross-frame knowledge update: record this user response at the label level
+        # so future frames benefit from the same confirmation without re-asking.
+        # PersistentTerrainKnowledge is NOT reset between frames (unlike the GP),
+        # so a confirmed "grass is safe" here propagates to the next frame's GP seed.
+        if parsed.terrain_label:
+            self._terrain_knowledge.update_from_feedback(
+                label=parsed.terrain_label,
+                is_traversable=parsed.is_traversable,
+                confidence=parsed.label_confidence,
+            )
+
+        # Step 10: Replan — re-run the full pipeline with updated GP posterior.
+        # The GP now knows the user's safety judgment, so LCB scores will shift.
+        replanned = self.run_scene(image_arr, scene_id + "_replanned", scene_graph, goal_pixel, user_profile)
+
+        return initial, replanned
+
+    def run_scene_with_pose(
+        self,
+        image,
+        pose: RobotPose,
+        scene_id: str = "scene",
+        goal_pixel: Optional[Tuple[int, int]] = None,
+        user_profile: Optional[UserProfile] = None,
+        depth_map: Optional[Any] = None,
+    ) -> EnvUncertaintyDecision:
+        """
+        Run the pipeline with robot pose — enables correct multi-frame GP accumulation.
+
+        Unlike run_scene(), observations from this call are stored in metric world
+        coordinates using `pose`. The WorldGPTraversabilityMap and WorldSceneGraph
+        persist across calls so the robot builds a growing terrain map as it moves.
+
+        This implements the May 19 extension requirement: visual odometry or GPS
+        converts image pixels to world (x, y) metres so observations from frame 1
+        at world position (2.0, 0.5) correctly persist when the robot is at (5.0, 0.0)
+        in frame 10. The per-frame GP (run_scene) is still reset between frames; the
+        world GP is never reset except via reset_world_knowledge().
+
+        Args:
+            image:      (H, W, 3) uint8 numpy array (RGB).
+            pose:       Current robot pose in world frame from odometry or GPS.
+                        Use MockForwardOdometry, OpticalFlowOdometry, or GPSOdometry
+                        from system.env_uncertainty.world_coords.
+            scene_id:   Identifier string for logging.
+            goal_pixel: Optional (y, x) goal in image coordinates (activates
+                        GoalDirectedTrajectoryGenerator).
+            user_profile: Question verbosity/format profile.
+            depth_map:  Optional (H, W) float depth image in metres. When None,
+                        monocular ground-plane depth estimation is used.
+
+        Returns:
+            EnvUncertaintyDecision — same structure as run_scene().
+            The world_gp and world_scene_graph properties are also updated.
+
+        Example usage with MockForwardOdometry::
+
+            from system.env_uncertainty.world_coords import MockForwardOdometry
+            odometry = MockForwardOdometry(speed_mps=0.5, fps=5.0)
+            runner = EnvironmentalUncertaintyRunner(config_path)
+            for img in frame_sequence:
+                pose = odometry.next_pose()
+                decision = runner.run_scene_with_pose(img, pose, goal_pixel=(50, 320))
+
+        Example usage with OpticalFlowOdometry::
+
+            from system.env_uncertainty.world_coords import OpticalFlowOdometry
+            odometry = OpticalFlowOdometry(fx=615, fy=615, cx=320, cy=240)
+            runner.set_camera_mount(CameraMount(height_m=0.6, pitch_rad=0.3))
+            for img in frame_sequence:
+                pose = odometry.update(img, dt=0.2)
+                decision = runner.run_scene_with_pose(img, pose)
+        """
+        import numpy as np
+        image = np.asarray(image)
+        h, w = image.shape[:2]
+
+        # Update intrinsics to match image resolution (scale from 640×480 baseline)
+        scale_x = w / 640.0
+        scale_y = h / 480.0
+        fx = self._fx * scale_x
+        fy = self._fy * scale_y
+        cx = self._cx * scale_x
+        cy = self._cy * scale_y
+
+        # Step 1: Detect unknown regions
+        result: DetectionResult = self._detector.detect(image)
+
+        # Step 4a: Seed per-frame GP (for trajectory scoring in image coordinates)
+        self._seed_gp_from_detection(result, h, w)
+
+        # Step 4b: Project each known region's mask pixels to world coordinates
+        #          and add to the world GP. This is the key multi-frame operation:
+        #          observations accumulate at real-world (x, y) positions regardless
+        #          of which frame they came from.
+        depth_np = np.asarray(depth_map) if depth_map is not None else None
+        for region in result.known_regions:
+            trav = self._terrain_knowledge.adjusted_traversability(
+                region.label, default_score=region.traversability
+            )
+            world_pts = mask_centroids_to_world(
+                mask=region.mask,
+                pose=pose,
+                fx=fx, fy=fy,
+                cx_principal=cx,
+                cy_principal=cy,
+                mount=self._camera_mount,
+                n_samples=9,
+                depth_map=depth_np,
+            )
+            for (x_w, y_w) in world_pts:
+                self._world_gp.add_world_observation(x_w, y_w, trav)
+                self._world_scene_graph.upsert_world_region(
+                    label=region.label, x_w=x_w, y_w=y_w,
+                    gp_mean=trav, gp_variance=0.1,
+                )
+
+        # Step 5: Generate and score trajectories in image coordinates
+        raw_trajectories = self._generate_trajectories(h, w, goal_pixel)
+        scored_trajectories = self._score_trajectories(raw_trajectories, result, h, w, goal_pixel)
+        best, best_lcb = self._select_best_trajectory_lcb(scored_trajectories, h, w)
+
+        # Collect on-path world-scene-graph nodes for Dirichlet entropy check.
+        # Convert trajectory waypoints to world coordinates and query WorldSceneGraph.
+        on_path_nodes: List[TerrainNode] = []
+        if best is not None:
+            for (wy, wx) in best.waypoints:
+                pt = pixel_to_world(wy, wx, pose, fx, fy, cx, cy, self._camera_mount,
+                                    depth_m=None)
+                if pt is not None:
+                    x_w, y_w = pt
+                    nodes = self._world_scene_graph.nodes_near_world(x_w, y_w, radius_m=self._camera_mount.height_m * 2)
+                    for node in nodes:
+                        key = (node.label, node.position_cell_id)
+                        if key not in {(n.label, n.position_cell_id) for n in on_path_nodes}:
+                            on_path_nodes.append(node)
+
+        # Step 6: Decide action
+        action, question = self._decide_action(
+            result, scored_trajectories, best, on_path_nodes,
+            best_lcb=best_lcb, user_profile=user_profile,
+        )
+
+        return EnvUncertaintyDecision(
+            scene_id=scene_id,
+            has_unknown=result.has_unknown,
+            unknown_coverage=result.unknown_coverage,
+            sam3_coverage=result.sam3_coverage,
+            best_trajectory=best,
+            robot_action=action,
+            question=question,
+            n_known_regions=len(result.known_regions),
+            n_unknown_regions=len(result.unknown_regions),
+        )
+
+    def reset_world_knowledge(self) -> None:
+        """
+        Clear the world-coordinate GP and WorldSceneGraph.
+
+        Use when starting in a completely new environment where accumulated world
+        observations should not carry over. Does not affect PersistentTerrainKnowledge
+        (label-level beliefs like "grass is safe" are environment-independent).
+        """
+        self._world_gp.reset()
+        self._world_scene_graph = WorldSceneGraph()
+
     def run_evaluation(self, test_cases: List[Dict]) -> Dict:
         """
         Evaluate on a list of test cases from nav_env_test.json.
@@ -317,18 +691,64 @@ class EnvironmentalUncertaintyRunner:
             if n_should_proceed > 0
             else 0.0
         )
+        # help_rate: fraction of all scenarios where the robot asked for help.
+        # High help_rate → over-cautious; low help_rate may miss real uncertainty.
+        # Baseline compare: always_ask has help_rate=1.0, always_act has help_rate=0.0.
+        n_asked = n_correct_ask + (n_should_proceed - n_correct_proceed)
+        help_rate = n_asked / n if n > 0 else 0.0
 
         return {
             "n_scenarios": n,
             "n_should_ask": n_should_ask,
             "n_should_proceed": n_should_proceed,
-            "AAR": round(aar, 4),   # Appropriate Ask Rate
-            "SAR": round(sar, 4),   # Spurious Ask Rate
+            "AAR": round(aar, 4),        # Appropriate Ask Rate: asked when should ask
+            "SAR": round(sar, 4),        # Spurious Ask Rate: asked when should proceed
+            "help_rate": round(help_rate, 4),  # overall fraction of scenes where robot asked
             "n_correct_ask": n_correct_ask,
             "n_correct_proceed": n_correct_proceed,
+            "n_asked": n_asked,
         }
 
     # ── Private helpers ───────────────────────────────────────────────────────
+
+    def _generate_trajectories(
+        self,
+        height: int,
+        width: int,
+        goal_pixel: Optional[Tuple[int, int]],
+    ) -> List[Trajectory]:
+        """
+        Return raw (unscored) candidate trajectories.
+
+        When goal_pixel is provided: uses GoalDirectedTrajectoryGenerator so all
+        three paths lead toward the navigation goal (May 19 mentor requirement).
+        When goal_pixel is None: falls back to the original fixed-geometry generator.
+        """
+        if goal_pixel is not None:
+            gen = GoalDirectedTrajectoryGenerator(height, width, n_waypoints=self._n_waypoints)
+            # Robot is assumed to start at bottom-center of the image (camera-frame
+            # convention: robot is at the bottom, looking forward/up in the image).
+            start = (height - 1, width // 2)
+            return gen.generate_toward_goal(start, goal_pixel)
+        else:
+            gen = TrajectoryGenerator(height, width, n_waypoints=self._n_waypoints)
+            return gen.generate_trajectories()
+
+    def _score_trajectories(
+        self,
+        raw_trajectories: List[Trajectory],
+        result: DetectionResult,
+        height: int,
+        width: int,
+        goal_pixel: Optional[Tuple[int, int]],
+    ) -> List[Trajectory]:
+        """Score raw trajectories against the traversability map."""
+        if goal_pixel is not None:
+            scorer = GoalDirectedTrajectoryGenerator(height, width, n_waypoints=self._n_waypoints)
+            return [scorer.score_trajectory(t, result.traversability_map) for t in raw_trajectories]
+        else:
+            scorer = TrajectoryGenerator(height, width, n_waypoints=self._n_waypoints)
+            return [scorer.score_trajectory(t, result.traversability_map) for t in raw_trajectories]
 
     def _seed_gp_from_detection(
         self, result: DetectionResult, height: int, width: int
@@ -340,6 +760,11 @@ class EnvironmentalUncertaintyRunner:
         SAM3's traversability labels before trajectory LCB scoring (Step 5).
         Unknown regions are intentionally excluded — the GP only learns from
         regions the robot already has a label for.
+
+        Cross-frame knowledge: if PersistentTerrainKnowledge has previously
+        recorded user feedback for a label (e.g. "grass is safe" from frame 1),
+        the adjusted traversability is used instead of the static default.
+        This lets confirmed labels propagate to new frames automatically.
         """
         import numpy as np
         for region in result.known_regions:
@@ -348,7 +773,11 @@ class EnvironmentalUncertaintyRunner:
                 continue
             ys, xs = np.where(mask)
             cy, cx = int(np.mean(ys)), int(np.mean(xs))
-            self._gp_map.add_observation(cy, cx, region.traversability, height, width)
+            # Use cross-frame knowledge when available; fall back to static score.
+            trav = self._terrain_knowledge.adjusted_traversability(
+                region.label, default_score=region.traversability
+            )
+            self._gp_map.add_observation(cy, cx, trav, height, width)
 
     def _select_best_trajectory_lcb(
         self,
@@ -359,22 +788,37 @@ class EnvironmentalUncertaintyRunner:
         """
         Select the safest trajectory by GP LCB score.
 
-        Only considers trajectories where passes_through_unknown=False.
-        Returns (best_trajectory, best_lcb_score).  Both are None when every
-        trajectory passes through unknown (triggers ASK in _decide_action).
+        Primary selection: trajectories where passes_through_unknown=False.
+        Fallback (user-feedback replan): when ALL trajectories pass through
+        unknown territory AND the GP has observations (i.e. user feedback was
+        applied), accept any trajectory whose GP LCB exceeds ask_threshold.
+        This lets a user-blessed "unknown" path become the selected best path on
+        the second run_scene() call inside run_with_feedback() (Step 10).
 
-        Scores each safe trajectory once and keeps the winning score so
-        _decide_action can apply the LCB-threshold STOP without a second GP call.
+        Returns (best_trajectory, best_lcb_score). Both None when no trajectory
+        meets the safety criteria, which triggers ASK in _decide_action.
         """
         safe = [t for t in trajectories if not t.passes_through_unknown]
-        if not safe:
-            return None, None
-        scored = [
-            (t, self._gp_map.score_trajectory_lcb(t.waypoints, height, width))
-            for t in safe
-        ]
-        best, best_lcb = max(scored, key=lambda ts: ts[1])
-        return best, best_lcb
+        if safe:
+            scored = [
+                (t, self._gp_map.score_trajectory_lcb(t.waypoints, height, width))
+                for t in safe
+            ]
+            best, best_lcb = max(scored, key=lambda ts: ts[1])
+            return best, best_lcb
+
+        # All paths pass through unknown — check whether the GP posterior (updated
+        # from user feedback) now rates any path as safe enough to proceed.
+        if self._gp_map.n_observations > 0:
+            scored = [
+                (t, self._gp_map.score_trajectory_lcb(t.waypoints, height, width))
+                for t in trajectories
+            ]
+            best, best_lcb = max(scored, key=lambda ts: ts[1])
+            if best_lcb >= self._ask_threshold:
+                return best, best_lcb
+
+        return None, None
 
     def _decide_action(
         self,
@@ -383,6 +827,7 @@ class EnvironmentalUncertaintyRunner:
         best_trajectory: Optional[Trajectory],
         on_path_nodes: Optional[List[TerrainNode]] = None,
         best_lcb: Optional[float] = None,
+        user_profile: Optional[UserProfile] = None,
     ):
         """
         Apply decision thresholds to pick PROCEED, ASK, or STOP.
@@ -411,9 +856,13 @@ class EnvironmentalUncertaintyRunner:
         # instead of saying "unrecognized area" generically.
         top_k = self._top_k_from_nodes(on_path_nodes)
 
+        profile = user_profile or DEFAULT_PROFILE
+
         # Very large unknown area → STOP (robot cannot proceed safely)
         if result.unknown_coverage >= self._stop_threshold:
-            question = self._question_gen.generate(result, trajectories, top_k_classes=top_k)
+            question = self._question_gen.generate(
+                result, trajectories, user_profile=profile, top_k_classes=top_k
+            )
             return "STOP", question
 
         # High Dirichlet semantic entropy on planned path → ASK.
@@ -423,7 +872,9 @@ class EnvironmentalUncertaintyRunner:
             node.semantic_entropy() > self._entropy_threshold
             for node in on_path_nodes
         ):
-            question = self._question_gen.generate(result, trajectories, top_k_classes=top_k)
+            question = self._question_gen.generate(
+                result, trajectories, user_profile=profile, top_k_classes=top_k
+            )
             return "ASK", question
 
         # GP LCB-based STOP: best safe path has dangerously low traversability.
@@ -434,7 +885,9 @@ class EnvironmentalUncertaintyRunner:
             and self._gp_map.n_observations > 0
             and best_lcb < self._lcb_stop_threshold
         ):
-            question = self._question_gen.generate(result, trajectories, top_k_classes=top_k)
+            question = self._question_gen.generate(
+                result, trajectories, user_profile=profile, top_k_classes=top_k
+            )
             return "STOP", question
 
         # No unknown regions, or unknown area is small and off-path → PROCEED
@@ -446,7 +899,9 @@ class EnvironmentalUncertaintyRunner:
             return "PROCEED", None
 
         # Unknown region exists and robot's path is affected → ASK
-        question = self._question_gen.generate(result, trajectories, top_k_classes=top_k)
+        question = self._question_gen.generate(
+            result, trajectories, user_profile=profile, top_k_classes=top_k
+        )
         return "ASK", question
 
     def _top_k_from_nodes(
