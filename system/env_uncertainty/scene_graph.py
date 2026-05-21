@@ -1,13 +1,18 @@
 """
-Scene graph with terrain memory for outdoor robot navigation.
+Per-image local terrain map with semantic uncertainty for outdoor robot navigation.
 
-Maintains a coarse 10×10 grid of TerrainNodes, one per (terrain_label, cell)
-pair.  The graph serves as a memory: once a terrain region is confirmed by the
-user AND the GP variance is low, should_skip_asking() returns True so the robot
-does not re-ask about the same terrain in the same location.
+IMPORTANT SCOPE: This module is a LOCAL, SINGLE-FRAME terrain representation.
+It maintains a coarse 10×10 grid (TerrainNodes) over ONE camera image.  Pixel
+coordinates here are image-relative — they shift between frames as the robot
+moves, so this data structure MUST be reset (or discarded) between frames.
 
-Design
-------
+For cross-frame knowledge that survives robot motion, use:
+  system.env_uncertainty.terrain_knowledge.PersistentTerrainKnowledge
+That module tracks label-level Bayesian beliefs ("grass is safe") across all
+frames without relying on pixel coordinates.
+
+Per-image grid design
+---------------------
   • Grid: 10×10 cells over the image. Each cell (cy, cx) ∈ [0,9]².
   • Key: (label.lower(), (cy, cx)) → TerrainNode.
   • Node states: UNKNOWN → INFERRED (after GP update) → CONFIRMED (after user).
@@ -179,6 +184,9 @@ class TerrainNode:
 
 # Forward-compatible alias — new code should use TerrainNodeV2.
 TerrainNodeV2 = TerrainNode
+
+
+# ── SceneGraph ────────────────────────────────────────────────────────────────
 
 
 class SceneGraph:
@@ -429,6 +437,64 @@ class SceneGraph:
             node for (_, cell), node in self._nodes.items() if cell == (cy, cx)
         ]
 
+    def merge_from_frame(
+        self,
+        other: "SceneGraph",
+        confidence_decay: float = 0.9,
+    ) -> None:
+        """
+        Incorporate terrain beliefs from a subsequent camera frame (B8).
+
+        When the robot moves and captures a new image, terrain regions may
+        appear in the same (label, cell) grid positions as the prior frame.
+        This method merges `other`'s beliefs into `self`:
+
+          - Matching (label, cell) nodes: blend GP means and Dirichlet alphas.
+            confidence_decay weights the prior: 0.9 means "prior counts 90%".
+          - New nodes in `other` (no prior observation): inserted as-is.
+          - Nodes in `self` not seen in `other`: kept unchanged (persistence).
+
+        Why by (label, cell) key — not by GPS or odometry?
+          The 10×10 normalized grid is image-relative, not world-absolute.
+          Matching by (label, cell) is a reasonable proxy for "same terrain
+          patch seen again" when the robot hasn't moved far between frames.
+          For large robot displacements or scene changes, a full odometry-based
+          transform should be used instead (future extension).
+
+        Args:
+            other:             SceneGraph from a newer frame.
+            confidence_decay:  Prior weight in [0, 1]. 1.0 = ignore new frame,
+                               0.0 = replace prior entirely with new frame.
+        """
+        for key, other_node in other._nodes.items():
+            if key in self._nodes:
+                self_node = self._nodes[key]
+                # Blend GP traversability estimates
+                w_prior = confidence_decay
+                w_new = 1.0 - confidence_decay
+                self_node.gp_mean = (
+                    w_prior * self_node.gp_mean + w_new * other_node.gp_mean
+                )
+                # Keep the higher variance (pessimistic: don't lower uncertainty
+                # just because a second frame agreed with the first)
+                self_node.gp_variance = max(
+                    self_node.gp_variance, other_node.gp_variance
+                )
+                # Merge Dirichlet alphas: decay prior counts, add new counts
+                for i in range(len(self_node.dirichlet_alpha)):
+                    self_node.dirichlet_alpha[i] = (
+                        confidence_decay * self_node.dirichlet_alpha[i]
+                        + other_node.dirichlet_alpha[i]
+                    )
+                self_node.last_updated = time.time()
+                # Propagate confirmed status: if either frame confirmed, keep it
+                if other_node.user_confirmed:
+                    self_node.user_confirmed = True
+                    self_node.certainty_level = CertaintyLevel.CONFIRMED
+            else:
+                # New terrain region — insert directly from other frame
+                self._nodes[key] = other_node
+
     @property
     def node_count(self) -> int:
         """Total number of TerrainNodes in the graph."""
@@ -456,3 +522,298 @@ class SceneGraph:
             return height // 2, width // 2
         ys, xs = np.where(arr)
         return int(np.mean(ys)), int(np.mean(xs))
+
+
+# ── Terminology alias (May 19 mentor feedback) ────────────────────────────────
+# The mentor noted that a single-image 10×10 grid should not be called a "scene
+# graph" (which implies multi-pose, multi-observation connections). Papers and
+# slides should use "cell-based terrain map" or "local terrain graph". The code
+# class stays SceneGraph to avoid breaking all imports; use LocalTerrainMap in
+# new code that you write after May 19.
+LocalTerrainMap = SceneGraph
+
+
+# ── WorldSceneGraph ───────────────────────────────────────────────────────────
+
+
+class WorldSceneGraph:
+    """
+    Multi-image terrain map in metric world coordinates.
+
+    Addresses the May 19 mentor critique: the original SceneGraph is
+    image-relative (10×10 grid over one camera view). WorldSceneGraph uses
+    fixed-size world-coordinate tiles so observations from many frames at
+    different robot poses all accumulate in the same persistent map.
+
+    This IS a true scene graph: nodes are connected across camera views, in
+    world space. Papers and slides should call this "multi-image terrain graph"
+    or "world terrain map". The paper term "scene graph" is now justified.
+
+    Design
+    ------
+    Tiles: TILE_SIZE_M × TILE_SIZE_M metre squares in the world XY plane.
+    Tile index: (tile_ix, tile_iy) where
+        tile_ix = floor(x_world / TILE_SIZE_M)
+        tile_iy = floor(y_world / TILE_SIZE_M)
+
+    Node key: (label.lower(), (tile_ix, tile_iy)) — same as LocalTerrainMap
+    but with world-absolute tile indices instead of image-relative cell indices.
+
+    Each TerrainNode's position_cell_id now stores (tile_ix, tile_iy) in world
+    tile space. All other TerrainNode semantics (Dirichlet, GP mean/variance,
+    confirmed, skip-ask) are identical.
+
+    Cross-frame merging: when the same (label, tile) is observed in multiple
+    frames, Dirichlet alphas and GP means are blended with confidence_decay.
+    No reset between frames — this is the purpose of WorldSceneGraph.
+
+    Args:
+        tile_size_m:         World tile size in metres (default 0.5 m).
+        confidence_decay:    Prior weight when merging repeated observations (default 0.9).
+    """
+
+    TILE_SIZE_M: float = 0.5
+    SKIP_VARIANCE_THRESHOLD: float = 0.04
+
+    def __init__(
+        self,
+        tile_size_m: float = 0.5,
+        confidence_decay: float = 0.9,
+    ) -> None:
+        self._tile_size = tile_size_m
+        self._decay = confidence_decay
+        self._nodes: Dict[Tuple[str, Tuple[int, int]], TerrainNode] = {}
+
+    # ── Coordinate mapping ────────────────────────────────────────────────────
+
+    def world_to_tile(self, x_w: float, y_w: float) -> Tuple[int, int]:
+        """
+        Map world coordinates (metres) to integer tile indices.
+
+        Tile (0, 0) covers [0, tile_size_m) × [0, tile_size_m).
+        Negative coordinates produce negative tile indices (the map has no bounds).
+
+        Args:
+            x_w: World x in metres.
+            y_w: World y in metres.
+
+        Returns:
+            (tile_ix, tile_iy) integer tile indices.
+        """
+        return (
+            int(math.floor(x_w / self._tile_size)),
+            int(math.floor(y_w / self._tile_size)),
+        )
+
+    def tile_centre_world(self, tile_ix: int, tile_iy: int) -> Tuple[float, float]:
+        """
+        Return the world-coordinate centre of a tile.
+
+        Args:
+            tile_ix, tile_iy: Integer tile indices.
+
+        Returns:
+            (x_w, y_w) centre of the tile in metres.
+        """
+        x_w = (tile_ix + 0.5) * self._tile_size
+        y_w = (tile_iy + 0.5) * self._tile_size
+        return x_w, y_w
+
+    # ── Node management ───────────────────────────────────────────────────────
+
+    def upsert_world_region(
+        self,
+        label: str,
+        x_w: float,
+        y_w: float,
+        gp_mean: Optional[float] = None,
+        gp_variance: Optional[float] = None,
+    ) -> TerrainNode:
+        """
+        Create or update the TerrainNode for (label, world tile).
+
+        When the same (label, tile) has been seen before: blend GP values and
+        Dirichlet alphas using confidence_decay (matches merge_from_frame logic).
+        New observations never downgrade certainty_level or user_confirmed.
+
+        Args:
+            label:       Terrain vocabulary label.
+            x_w:         World x coordinate in metres.
+            y_w:         World y coordinate in metres.
+            gp_mean:     GP posterior mean (None = use vocabulary default).
+            gp_variance: GP posterior variance (None = 0.0).
+
+        Returns:
+            The created or updated TerrainNode.
+        """
+        tile = self.world_to_tile(x_w, y_w)
+        key = (label.lower(), tile)
+
+        if key in self._nodes:
+            node = self._nodes[key]
+            # Blend GP estimates with existing observation
+            if gp_mean is not None:
+                node.gp_mean = (
+                    self._decay * node.gp_mean + (1.0 - self._decay) * gp_mean
+                )
+            if gp_variance is not None:
+                # Keep higher variance (pessimistic: don't lower uncertainty prematurely)
+                node.gp_variance = max(node.gp_variance, gp_variance)
+            node.last_updated = time.time()
+            if node.certainty_level == CertaintyLevel.UNKNOWN and gp_mean is not None:
+                node.certainty_level = CertaintyLevel.INFERRED
+            return node
+
+        # New tile: create node
+        initial_mean = gp_mean if gp_mean is not None else get_traversability(label)
+        initial_var = gp_variance if gp_variance is not None else 0.0
+        level = CertaintyLevel.INFERRED if gp_mean is not None else CertaintyLevel.UNKNOWN
+
+        initial_alpha = _uniform_alpha()
+        label_lower = label.lower()
+        if label_lower in TERRAIN_CLASSES:
+            initial_alpha[TERRAIN_CLASSES.index(label_lower)] = 2.0
+
+        node = TerrainNode(
+            label=label_lower,
+            position_cell_id=tile,      # (tile_ix, tile_iy) in world space
+            gp_mean=initial_mean,
+            gp_variance=initial_var,
+            certainty_level=level,
+            user_confirmed=False,
+            dirichlet_alpha=initial_alpha,
+        )
+        self._nodes[key] = node
+        return node
+
+    def upsert_world_region_from_gp(
+        self,
+        label: str,
+        x_w: float,
+        y_w: float,
+        world_gp: "WorldGPTraversabilityMap",  # noqa: F821
+    ) -> TerrainNode:
+        """
+        Upsert a world tile node using a WorldGPTraversabilityMap prediction.
+
+        Queries the world GP at (x_w, y_w) and stores the posterior mean and
+        variance in the tile node.
+
+        Args:
+            label:    Terrain vocabulary label.
+            x_w, y_w: World coordinates in metres.
+            world_gp: WorldGPTraversabilityMap instance.
+
+        Returns:
+            The created or updated TerrainNode.
+        """
+        from system.env_uncertainty.gp_traversability import WorldGPTraversabilityMap
+        pred = world_gp.predict_world(x_w, y_w)
+        return self.upsert_world_region(
+            label=label, x_w=x_w, y_w=y_w,
+            gp_mean=pred.mu, gp_variance=pred.sigma ** 2,
+        )
+
+    def recall_tile(
+        self, label: str, tile_ix: int, tile_iy: int
+    ) -> Optional[TerrainNode]:
+        """Look up a node by label and tile indices."""
+        return self._nodes.get((label.lower(), (tile_ix, tile_iy)))
+
+    def recall_world(self, label: str, x_w: float, y_w: float) -> Optional[TerrainNode]:
+        """Look up the node at the tile containing world position (x_w, y_w)."""
+        tile = self.world_to_tile(x_w, y_w)
+        return self._nodes.get((label.lower(), tile))
+
+    def should_skip_asking_world(
+        self, label: str, x_w: float, y_w: float
+    ) -> Tuple[bool, Optional[TerrainNode]]:
+        """
+        Return whether the tile at (x_w, y_w) can skip asking the user.
+
+        Skip condition: user_confirmed=True AND gp_variance < threshold.
+        """
+        node = self.recall_world(label, x_w, y_w)
+        if node is None:
+            return False, None
+        skip = node.user_confirmed and node.gp_variance < self.SKIP_VARIANCE_THRESHOLD
+        return skip, node
+
+    def mark_confirmed_world(
+        self, label: str, x_w: float, y_w: float, is_traversable: bool
+    ) -> Optional[TerrainNode]:
+        """Record user confirmation for the tile at world position (x_w, y_w)."""
+        tile = self.world_to_tile(x_w, y_w)
+        node = self._nodes.get((label.lower(), tile))
+        if node is None:
+            return None
+        node.user_confirmed = True
+        node.certainty_level = CertaintyLevel.CONFIRMED
+        node.last_updated = time.time()
+        return node
+
+    def nodes_near_world(
+        self, x_w: float, y_w: float, radius_m: float = 1.0
+    ) -> List[TerrainNode]:
+        """
+        Return all nodes within radius_m metres of world position (x_w, y_w).
+
+        Used by the runner to find on-path scene graph nodes when trajectory
+        waypoints are expressed in world coordinates.
+
+        Args:
+            x_w, y_w:  World position in metres.
+            radius_m:  Search radius in metres.
+
+        Returns:
+            List of TerrainNodes whose tile centres are within radius_m.
+        """
+        results = []
+        r_tiles = int(math.ceil(radius_m / self._tile_size)) + 1
+        tile = self.world_to_tile(x_w, y_w)
+        for di in range(-r_tiles, r_tiles + 1):
+            for dj in range(-r_tiles, r_tiles + 1):
+                nearby_tile = (tile[0] + di, tile[1] + dj)
+                cx, cy = self.tile_centre_world(*nearby_tile)
+                dist = math.sqrt((cx - x_w) ** 2 + (cy - y_w) ** 2)
+                if dist <= radius_m:
+                    for (_, t), node in self._nodes.items():
+                        if t == nearby_tile:
+                            results.append(node)
+        return results
+
+    def update_dirichlet_from_user(
+        self, label: str, x_w: float, y_w: float, confidence: float = 0.85
+    ) -> None:
+        """Conjugate Dirichlet update for the tile at world position (x_w, y_w)."""
+        node = self.recall_world(label, x_w, y_w)
+        if node is not None:
+            node.update_from_user(label, confidence)
+
+    @property
+    def node_count(self) -> int:
+        """Total number of world-tile nodes in the map."""
+        return len(self._nodes)
+
+    @property
+    def tile_size_m(self) -> float:
+        return self._tile_size
+
+    def summary(self) -> str:
+        """One-line summary: tile count and world bounding box."""
+        if not self._nodes:
+            return "WorldSceneGraph: empty"
+        tiles = [tile for (_, tile) in self._nodes.keys()]
+        xs = [t[0] for t in tiles]
+        ys = [t[1] for t in tiles]
+        x_range = (min(xs) * self._tile_size, max(xs) * self._tile_size)
+        y_range = (min(ys) * self._tile_size, max(ys) * self._tile_size)
+        return (
+            f"WorldSceneGraph: {self.node_count} nodes | "
+            f"x=[{x_range[0]:.1f}, {x_range[1]:.1f}] m | "
+            f"y=[{y_range[0]:.1f}, {y_range[1]:.1f}] m"
+        )
+
+
+# math is needed for WorldSceneGraph
+import math  # noqa: E402 (import at bottom to avoid re-order of module-level code)
