@@ -29,6 +29,11 @@ docs/*.aux
 docs/*.log
 docs/*.pdf
 
+# Large binary / dataset archives (never commit these)
+*.zip
+*.tar.gz
+*.tgz
+
 # Personal notes / scratch (root-level only)
 /*.txt
 /meeting_prep*.md
