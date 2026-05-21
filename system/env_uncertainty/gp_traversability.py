@@ -102,6 +102,11 @@ class GPTraversabilityMap:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
+    def reset(self) -> None:
+        """Clear all observations, returning to the uninformative prior."""
+        self._X = []
+        self._y = []
+
     def add_observation(
         self,
         pixel_y: int,
@@ -240,6 +245,190 @@ class GPTraversabilityMap:
 
     def _refit(self) -> None:
         """Refit the GP on all stored observations."""
+        X = np.array(self._X)
+        y = np.array(self._y)
+        self._gpr.fit(X, y)
+
+
+# ── WorldGPTraversabilityMap ──────────────────────────────────────────────────
+
+
+class WorldGPTraversabilityMap:
+    """
+    GP traversability map in metric world coordinates (x_world, y_world metres).
+
+    Unlike GPTraversabilityMap, observations are stored in world coordinates so
+    they accumulate correctly across frames as the robot moves. The RBF kernel
+    length scale is in metres (default 1.0 m) rather than normalized image units.
+
+    This enables true multi-frame GP: observations from frame 1 at world position
+    (2.0, 0.5) are still valid in frame 10 when the robot is at (5.0, 0.0) and
+    looking back at the same terrain patch.
+
+    Usage:
+        # With MockForwardOdometry (dataset evaluation)
+        odometry = MockForwardOdometry(speed_mps=0.5, fps=5.0)
+        world_gp = WorldGPTraversabilityMap()
+
+        for frame in frames:
+            pose = odometry.next_pose()
+            for region in detection.known_regions:
+                for (x_w, y_w) in mask_centroids_to_world(region.mask, pose, ...):
+                    world_gp.add_world_observation(x_w, y_w, region.traversability)
+
+    Args:
+        length_scale_m: RBF kernel length scale in metres (default 1.0 m).
+                        Controls how quickly traversability estimates decay
+                        with distance. 1.0 m is appropriate for outdoor ground robots.
+        noise_level:    WhiteKernel noise for observation noise (default 0.01).
+        max_observations: Cap on stored observations (oldest are dropped when
+                          exceeded) to bound GP fit time. Default 500.
+    """
+
+    MU_PRIOR: float = 0.5
+    SIGMA_PRIOR: float = 0.4
+    DEFAULT_BETA: float = 1.5
+
+    def __init__(
+        self,
+        length_scale_m: float = 1.0,
+        noise_level: float = 0.01,
+        max_observations: int = 500,
+    ) -> None:
+        kernel = RBF(length_scale=length_scale_m) + WhiteKernel(noise_level=noise_level)
+        self._gpr = GaussianProcessRegressor(
+            kernel=kernel,
+            n_restarts_optimizer=0,
+            normalize_y=True,
+        )
+        self._X: List[List[float]] = []   # [[x_w, y_w], ...]  in metres
+        self._y: List[float] = []
+        self._max_obs = max_observations
+
+    # ── Public API ────────────────────────────────────────────────────────────
+
+    def reset(self) -> None:
+        """Clear all world-coordinate observations."""
+        self._X = []
+        self._y = []
+
+    def add_world_observation(
+        self,
+        x_w: float,
+        y_w: float,
+        traversability: float,
+    ) -> None:
+        """
+        Record a terrain observation at world position (x_w, y_w).
+
+        Maintains a rolling window of max_observations to keep GP inference fast.
+
+        Args:
+            x_w:            World x coordinate in metres.
+            y_w:            World y coordinate in metres.
+            traversability: Score ∈ [0, 1].
+        """
+        if len(self._X) >= self._max_obs:
+            self._X.pop(0)
+            self._y.pop(0)
+        self._X.append([x_w, y_w])
+        self._y.append(float(np.clip(traversability, 0.0, 1.0)))
+        self._refit()
+
+    def predict_world(
+        self,
+        x_w: float,
+        y_w: float,
+        beta: float = DEFAULT_BETA,
+    ) -> GPPrediction:
+        """
+        Posterior traversability estimate at world position (x_w, y_w).
+
+        Args:
+            x_w:  World x in metres.
+            y_w:  World y in metres.
+            beta: LCB exploration parameter.
+
+        Returns:
+            GPPrediction with mu, sigma, lcb, beta, source.
+        """
+        if not self._X:
+            lcb = self.MU_PRIOR - beta * self.SIGMA_PRIOR
+            return GPPrediction(
+                mu=self.MU_PRIOR, sigma=self.SIGMA_PRIOR,
+                lcb=lcb, beta=beta, source="prior",
+            )
+
+        mu_arr, sigma_arr = self._gpr.predict([[x_w, y_w]], return_std=True)
+        mu = float(np.clip(mu_arr[0], 0.0, 1.0))
+        sigma = float(max(0.0, sigma_arr[0]))
+        lcb = mu - beta * sigma
+        return GPPrediction(mu=mu, sigma=sigma, lcb=lcb, beta=beta, source="posterior")
+
+    def score_trajectory_world_lcb(
+        self,
+        world_waypoints: List[Tuple[float, float]],
+        beta: float = DEFAULT_BETA,
+    ) -> float:
+        """
+        Min LCB over world-coordinate trajectory waypoints.
+
+        Args:
+            world_waypoints: List of (x_w, y_w) in metres.
+            beta:            LCB exploration parameter.
+
+        Returns:
+            Minimum LCB across all waypoints.
+        """
+        if not world_waypoints:
+            return self.MU_PRIOR - beta * self.SIGMA_PRIOR
+        scores = [self.predict_world(x, y, beta).lcb for x, y in world_waypoints]
+        return float(min(scores))
+
+    def apply_world_feedback(
+        self,
+        x_w: float,
+        y_w: float,
+        is_traversable: bool,
+        p_tp: float = 0.95,
+        p_fp: float = 0.10,
+    ) -> None:
+        """
+        Bayesian GP update at world position from a user traversability response.
+
+        Reads the current GP posterior mean at (x_w, y_w) as the prior, applies
+        _bayesian_update() to get the posterior, then records it as a new observation.
+
+        Args:
+            x_w, y_w:       World position in metres.
+            is_traversable: True if user says the region is safe.
+            p_tp:           P(response="safe" | traversable=True).
+            p_fp:           P(response="safe" | traversable=False).
+        """
+        prior = self.predict_world(x_w, y_w).mu
+        posterior = _bayesian_update(prior, is_traversable, p_tp, p_fp)
+        self.add_world_observation(x_w, y_w, posterior)
+
+    @property
+    def n_observations(self) -> int:
+        """Number of world-coordinate terrain observations recorded."""
+        return len(self._X)
+
+    @property
+    def observation_bounds(self) -> Optional[Tuple[float, float, float, float]]:
+        """
+        Bounding box of all observations: (min_x, max_x, min_y, max_y) in metres.
+        Returns None when no observations exist.
+        """
+        if not self._X:
+            return None
+        arr = np.array(self._X)
+        return float(arr[:, 0].min()), float(arr[:, 0].max()), \
+               float(arr[:, 1].min()), float(arr[:, 1].max())
+
+    # ── Private ───────────────────────────────────────────────────────────────
+
+    def _refit(self) -> None:
         X = np.array(self._X)
         y = np.array(self._y)
         self._gpr.fit(X, y)
