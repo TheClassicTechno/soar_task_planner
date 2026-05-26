@@ -8,6 +8,10 @@ nav_stack_path: "~/Documents/navigation_stack"
 sam3:
   # HuggingFace model ID — requires approved access at huggingface.co/facebook/sam3
   hf_model_id: "facebook/sam3"
+  # Local weights directory path (optional fallback/offline support)
+  # local_model_path: "~/checkpoints/sam3"
+  # Force offline loading without querying HuggingFace Hub (true/false)
+  # local_files_only: false
   # "auto" selects CUDA > MPS (Apple Silicon) > CPU automatically
   device: "auto"
   detection_threshold: 0.5

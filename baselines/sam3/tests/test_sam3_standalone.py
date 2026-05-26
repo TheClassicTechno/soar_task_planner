@@ -134,7 +134,7 @@ def test_init_calls_processor_from_pretrained(tmp_path):
     with patch("baselines.sam3.sam3_standalone.Sam3Model", MockModelCls), \
          patch("baselines.sam3.sam3_standalone.Sam3Processor", MockProcCls):
         SAM3Baseline(str(cp))
-    MockProcCls.from_pretrained.assert_called_once_with("test/sam3")
+    MockProcCls.from_pretrained.assert_called_once_with("test/sam3", local_files_only=False)
 
 
 def test_init_calls_model_from_pretrained(tmp_path):
@@ -146,7 +146,7 @@ def test_init_calls_model_from_pretrained(tmp_path):
     with patch("baselines.sam3.sam3_standalone.Sam3Model", MockModelCls), \
          patch("baselines.sam3.sam3_standalone.Sam3Processor", MockProcCls):
         SAM3Baseline(str(cp))
-    MockModelCls.from_pretrained.assert_called_once_with("test/sam3")
+    MockModelCls.from_pretrained.assert_called_once_with("test/sam3", local_files_only=False)
 
 
 # ── queries property ───────────────────────────────────────────────────────────
@@ -336,3 +336,76 @@ def test_load_config_returns_dict():
     result = load_config(CONFIG_PATH)
     assert isinstance(result, dict)
     assert "sam3" in result
+
+
+def test_init_with_local_model_path_exists(tmp_path):
+    # Create a local directory to act as local_model_path
+    local_dir = tmp_path / "local_sam3"
+    local_dir.mkdir()
+
+    config = {
+        "sam3": {
+            "queries": ["gravel"],
+            "detection_threshold": 0.5,
+            "hf_model_id": "facebook/sam3",
+            "local_model_path": str(local_dir),
+            "device": "cpu",
+        }
+    }
+    cp = tmp_path / "c.yaml"
+    cp.write_text(yaml.dump(config))
+
+    MockProcCls, MockModelCls, _, _ = _build_mock_classes(queries=["gravel"])
+    with patch("baselines.sam3.sam3_standalone.Sam3Model", MockModelCls), \
+         patch("baselines.sam3.sam3_standalone.Sam3Processor", MockProcCls):
+        SAM3Baseline(str(cp))
+
+    MockProcCls.from_pretrained.assert_called_once_with(str(local_dir), local_files_only=False)
+    MockModelCls.from_pretrained.assert_called_once_with(str(local_dir), local_files_only=False)
+
+
+def test_init_with_local_model_path_missing(tmp_path):
+    local_dir = tmp_path / "non_existent_local_sam3"
+
+    config = {
+        "sam3": {
+            "queries": ["gravel"],
+            "detection_threshold": 0.5,
+            "hf_model_id": "facebook/sam3-fallback",
+            "local_model_path": str(local_dir),
+            "device": "cpu",
+        }
+    }
+    cp = tmp_path / "c.yaml"
+    cp.write_text(yaml.dump(config))
+
+    MockProcCls, MockModelCls, _, _ = _build_mock_classes(queries=["gravel"])
+    with patch("baselines.sam3.sam3_standalone.Sam3Model", MockModelCls), \
+         patch("baselines.sam3.sam3_standalone.Sam3Processor", MockProcCls):
+        SAM3Baseline(str(cp))
+
+    # Should fallback to hf_model_id since local_dir doesn't exist
+    MockProcCls.from_pretrained.assert_called_once_with("facebook/sam3-fallback", local_files_only=False)
+    MockModelCls.from_pretrained.assert_called_once_with("facebook/sam3-fallback", local_files_only=False)
+
+
+def test_init_passes_local_files_only(tmp_path):
+    config = {
+        "sam3": {
+            "queries": ["gravel"],
+            "detection_threshold": 0.5,
+            "hf_model_id": "facebook/sam3",
+            "local_files_only": True,
+            "device": "cpu",
+        }
+    }
+    cp = tmp_path / "c.yaml"
+    cp.write_text(yaml.dump(config))
+
+    MockProcCls, MockModelCls, _, _ = _build_mock_classes(queries=["gravel"])
+    with patch("baselines.sam3.sam3_standalone.Sam3Model", MockModelCls), \
+         patch("baselines.sam3.sam3_standalone.Sam3Processor", MockProcCls):
+        SAM3Baseline(str(cp))
+
+    MockProcCls.from_pretrained.assert_called_once_with("facebook/sam3", local_files_only=True)
+    MockModelCls.from_pretrained.assert_called_once_with("facebook/sam3", local_files_only=True)

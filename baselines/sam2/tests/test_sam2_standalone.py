@@ -216,3 +216,32 @@ def test_segment_alias(mock_config_path):
         img = Image.new("RGB", (15, 15))
         baseline.segment(img)
         mock_seg.assert_called_once_with(img)
+
+
+@patch("baselines.sam2.sam2_standalone._TORCH_AVAILABLE", True)
+def test_timing_and_fps(mock_config_path):
+    mock_generator_instance = MagicMock()
+    mock_generator_cls.return_value = mock_generator_instance
+    mock_generator_instance.generate.return_value = []
+
+    baseline = SAM2Baseline(config_path=mock_config_path, device="cpu")
+    
+    # Before segmenting, mean_fps should be 0.0
+    assert baseline.mean_fps() == 0.0
+    
+    # Run segment
+    img = Image.new("RGB", (15, 15))
+    baseline.segment(img)
+    
+    # After segmenting, mean_fps should be > 0.0
+    assert len(baseline._timing) == 1
+    assert baseline.mean_fps() > 0.0
+    
+    # Run segment again to accumulate timing
+    baseline.segment(img)
+    assert len(baseline._timing) == 2
+    
+    # Reset timing
+    baseline.reset_timing()
+    assert len(baseline._timing) == 0
+    assert baseline.mean_fps() == 0.0

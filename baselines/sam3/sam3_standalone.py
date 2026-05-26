@@ -10,6 +10,7 @@ Prerequisites:
   HF access approved at huggingface.co/facebook/sam3
 """
 
+import os
 import time
 from typing import Dict, List
 
@@ -60,13 +61,26 @@ class SAM3Baseline:
         self._threshold: float = sam3_cfg.get("detection_threshold", 0.5)
         self._timing: List[float] = []
 
-        model_id = sam3_cfg.get("hf_model_id", "facebook/sam3")
+        local_model_path = sam3_cfg.get("local_model_path", None)
+        if local_model_path:
+            local_model_path = os.path.expanduser(local_model_path)
+
+        local_files_only = sam3_cfg.get("local_files_only", False)
         self._device = _select_device(sam3_cfg.get("device", "auto"))
 
-        print(f"[SAM3] Loading {model_id} → {self._device}")
-        print("       (first run downloads ~3.6 GB to HF cache)")
-        self._processor = Sam3Processor.from_pretrained(model_id)
-        self._model = Sam3Model.from_pretrained(model_id).to(self._device)
+        if local_model_path and os.path.exists(local_model_path) and os.path.isdir(local_model_path):
+            model_id = local_model_path
+            print(f"[SAM3] Loading from local model path: {model_id} → {self._device}")
+        else:
+            model_id = sam3_cfg.get("hf_model_id", "facebook/sam3")
+            if local_model_path:
+                print(f"[SAM3] Warning: local_model_path '{local_model_path}' not found or not a directory. Falling back to '{model_id}'.")
+            else:
+                print(f"[SAM3] Loading {model_id} → {self._device}")
+                print("       (first run downloads ~3.6 GB to HF cache)")
+
+        self._processor = Sam3Processor.from_pretrained(model_id, local_files_only=local_files_only)
+        self._model = Sam3Model.from_pretrained(model_id, local_files_only=local_files_only).to(self._device)
         self._model.eval()
         print(f"[SAM3] Ready — {len(self._queries)} terrain concepts")
 

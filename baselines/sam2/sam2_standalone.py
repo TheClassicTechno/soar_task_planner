@@ -106,6 +106,7 @@ class SAM2Baseline:
         self._points_per_side = sam2_cfg.get("points_per_side", 32)
         self._threshold = sam2_cfg.get("detection_threshold", 0.5)
         self._iou_threshold = sam2_cfg.get("iou_threshold", 0.7)
+        self._timing: List[float] = []
         
         print(f"[SAM2] Loading {model_cfg} with checkpoint {checkpoint_path} → {self._device}")
         
@@ -172,6 +173,7 @@ class SAM2Baseline:
             all_scores = []
         
         elapsed = time.perf_counter() - t0
+        self._timing.append(elapsed)
         
         if all_masks:
             masks_array = np.stack(all_masks)
@@ -194,6 +196,16 @@ class SAM2Baseline:
         Alias for segment_everything - matches SAM3 interface.
         """
         return self.segment_everything(image)
+
+    def mean_fps(self) -> float:
+        """Mean frames-per-second across all segment() calls. 0.0 before any calls."""
+        if not self._timing:
+            return 0.0
+        return 1.0 / (sum(self._timing) / len(self._timing))
+
+    def reset_timing(self) -> None:
+        """Clear accumulated timing history."""
+        self._timing.clear()
 
 
 def load_config(config_path: str) -> Dict:
