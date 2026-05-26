@@ -473,3 +473,34 @@ def test_rich_all_fields_present():
     assert hasattr(r, "traversability_confidence")
     assert hasattr(r, "affordance_modifier")
     assert hasattr(r, "keywords")
+
+
+# ── parse_user_response_rich — ranked terrain-label scoring ──────────────────
+
+def test_rich_ranked_label_grass_beats_mud_by_frequency():
+    # "grass" synonyms: "grass"(1) + "lawn"(1) + "field"(1) = 3 matches
+    # "mud" synonyms: "mud"(1) = 1 match
+    # Frequency ranking should pick grass (3 > 1)
+    r = parse_user_response_rich("wet muddy grass lawn field")
+    assert r.terrain_label == "grass"
+
+
+def test_rich_ranked_label_single_synonym_still_works():
+    r = parse_user_response_rich("it's just mud, avoid it")
+    assert r.terrain_label == "mud"
+
+
+def test_rich_ranked_label_tie_is_deterministic():
+    # "grass"(1) vs "mud"(1) — tie broken by Counter.most_common (stable)
+    r1 = parse_user_response_rich("muddy grass")
+    r2 = parse_user_response_rich("muddy grass")
+    assert r1.terrain_label == r2.terrain_label
+
+
+def test_rich_ranked_label_all_kw_hits_in_keywords():
+    # With ranked scoring, ALL matching terrain keywords appear in keywords list
+    r = parse_user_response_rich("wet muddy grass lawn")
+    terrain_hits = [k for k in r.keywords if k in ("mud", "muddy", "grass", "lawn")]
+    # "muddy" is a traversability keyword, "grass" and "lawn" are terrain keywords
+    assert "grass" in r.keywords
+    assert "lawn" in r.keywords

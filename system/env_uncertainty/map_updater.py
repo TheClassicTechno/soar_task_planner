@@ -22,6 +22,7 @@ Affordance keyword design
 """
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -60,6 +61,10 @@ _CONFIDENCE_KEYWORDS: Dict[str, float] = {
 _TRAVERSABILITY_KEYWORDS: Dict[str, float] = {
     # Positive
     "safe": +0.20,
+    "okay": +0.15,
+    "fine": +0.15,
+    "good": +0.10,
+    "alright": +0.10,
     "firm": +0.15,
     "solid": +0.15,
     "flat": +0.10,
@@ -98,7 +103,7 @@ _TERRAIN_LABEL_KEYWORDS: Dict[str, str] = {
     "walkway": "sidewalk", "footpath": "sidewalk",
     "road": "road", "street": "road", "asphalt": "road", "tarmac": "road",
     "dirt": "dirt", "soil": "dirt", "earth": "dirt", "ground": "dirt",
-    "mud": "mud", "muck": "mud",
+    "mud": "mud", "muck": "mud", "muddy": "mud",
     "puddle": "puddle", "pool": "puddle",
     "water": "water", "stream": "water", "flooded": "puddle",
     "slope": "slope", "hill": "slope", "incline": "slope", "ramp": "slope",
@@ -127,12 +132,16 @@ class ParsedUserResponse:
     """
     Structured output from parse_user_response_rich().
 
-    terrain_label:            Canonical terrain class, or None if not detected.
-    label_confidence:         Confidence in the terrain_label in [0, 1].
+    terrain_label:            Top-ranked canonical terrain class, or None.
+    label_confidence:         Confidence in terrain_label in [0, 1].
     is_traversable:           True when net affordance modifier >= 0.
     traversability_confidence: Estimated confidence in is_traversable in [0, 1].
     affordance_modifier:      Sum of matched traversability keyword modifiers.
     keywords:                 All matched keyword strings (for logging / audit).
+    ranked_labels:            All detected terrain classes with normalized scores,
+                              sorted descending. e.g. [("grass", 0.67), ("mud", 0.33)].
+                              Enables soft Dirichlet updates when the response is
+                              ambiguous ("wet muddy grass" → grass + mud both present).
     """
 
     terrain_label: Optional[str]
@@ -141,6 +150,7 @@ class ParsedUserResponse:
     traversability_confidence: float
     affordance_modifier: float
     keywords: List[str] = field(default_factory=list)
+    ranked_labels: List[tuple] = field(default_factory=list)
 
 
 @dataclass
@@ -260,7 +270,11 @@ def parse_user_response_rich(text: str) -> ParsedUserResponse:
 
     1. Confidence — scan _CONFIDENCE_KEYWORDS for hedge language; take the first
        match (phrases before single words so "not sure" beats "sure").
-    2. Terrain label — scan _TERRAIN_LABEL_KEYWORDS for the first class synonym.
+    2. Terrain label — scan ALL _TERRAIN_LABEL_KEYWORDS and count matches per
+       canonical class; the class with the most synonym hits wins (frequency
+       ranking).  Ties are broken deterministically by Counter.most_common().
+       This handles multi-class inputs ("wet muddy grass field" → grass×2 beats
+       mud×1) better than stopping at the first match.
     3. Traversability — sum all matched _TRAVERSABILITY_KEYWORDS modifiers;
        is_traversable is True when the net sum >= 0.
 
@@ -285,13 +299,26 @@ def parse_user_response_rich(text: str) -> ParsedUserResponse:
             matched_keywords.append(kw)
             break
 
-    # Step 2 — terrain label (first synonym match wins)
-    terrain_label: Optional[str] = None
-    for kw, cls in sorted(_TERRAIN_LABEL_KEYWORDS.items(), key=lambda x: -len(x[0])):
+    # Step 2 — terrain label: count matches per canonical class, pick most-mentioned.
+    # Frequency ranking handles multi-class inputs ("wet muddy grass field" → grass×2
+    # beats mud×1) more accurately than stopping at the first keyword match.
+    _class_counts: Counter = Counter()
+    _kw_hits: List[str] = []
+    for kw, cls in _TERRAIN_LABEL_KEYWORDS.items():
         if re.search(r"\b" + re.escape(kw) + r"\b", normalized):
-            terrain_label = cls
-            matched_keywords.append(kw)
-            break
+            _class_counts[cls] += 1
+            _kw_hits.append(kw)
+    terrain_label: Optional[str] = _class_counts.most_common(1)[0][0] if _class_counts else None
+    matched_keywords.extend(_kw_hits)
+
+    # Ranked labels: normalize counts to [0,1] scores, sorted descending.
+    # Exposes the full distribution so callers can do soft Dirichlet updates
+    # on ambiguous responses (e.g. "muddy gravel" → [("gravel",0.5),("mud",0.5)]).
+    _total_hits = sum(_class_counts.values())
+    ranked_labels = (
+        [(cls, count / _total_hits) for cls, count in _class_counts.most_common()]
+        if _total_hits > 0 else []
+    )
 
     # Step 3 — traversability affordance modifiers (sum all matches)
     affordance_modifier = 0.0
@@ -317,6 +344,7 @@ def parse_user_response_rich(text: str) -> ParsedUserResponse:
         traversability_confidence=traversability_confidence,
         affordance_modifier=affordance_modifier,
         keywords=matched_keywords,
+        ranked_labels=ranked_labels,
     )
 
 
