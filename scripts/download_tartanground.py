@@ -20,6 +20,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import zipfile
 from pathlib import Path
@@ -29,7 +30,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 
 def download_tartanground(
-    out_dir: str = "/Users/julih/Documents/datasets/TartanGround",
+    out_dir: str = "~/Documents/datasets/TartanGround",
     env: str = "OldTownSummer",
     traj: str = "P0000",
     robot: str = "omni",
@@ -66,7 +67,7 @@ def download_tartanground(
         seg_labels_path,
     ]
 
-    out_path = Path(out_dir)
+    out_path = Path(os.path.expanduser(out_dir))
     out_path.mkdir(parents=True, exist_ok=True)
 
     print(f"Downloading TartanGround subset from HuggingFace ({repo_id})")
@@ -145,7 +146,7 @@ def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Download minimal TartanGround subset")
     p.add_argument(
         "--out_dir",
-        default="/Users/julih/Documents/datasets/TartanGround",
+        default="~/Documents/datasets/TartanGround",
         help="Root output directory",
     )
     p.add_argument(

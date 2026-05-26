@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -294,7 +295,7 @@ def run_on_tartanground(
     Returns:
         List of per-frame result dicts.
     """
-    root = Path(tartanground_dir)
+    root = Path(os.path.expanduser(tartanground_dir))
     env_dir = root / env
     traj_dir = env_dir / f"Data_{robot}" / traj
     img_dir = traj_dir / "image_lcam_front"
@@ -435,7 +436,7 @@ def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run uncertainty pipeline on TartanGround")
     p.add_argument(
         "--tartanground_dir",
-        default="/Users/julih/Documents/datasets/TartanGround",
+        default="~/Documents/datasets/TartanGround",
         help="Path to TartanGround root",
     )
     p.add_argument("--env", default="OldTownSummer", help="Environment name")

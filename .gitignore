@@ -40,3 +40,6 @@ docs/*.pdf
 /may12progress.md
 /progress_update*.md
 /ourmethodsdiagram.png
+
+# Checkpoints (large binary models)
+checkpoints/

@@ -1,0 +1,20 @@
+# SAM2 configuration
+
+sam2:
+  # Meta official model configuration name
+  model_cfg: "sam2_hiera_l.yaml"
+  
+  # Path to local checkpoint file
+  checkpoint: "checkpoints/sam2_hiera_large.pt"
+  
+  # "auto" selects CUDA > MPS (Apple Silicon) > CPU automatically
+  device: "auto"
+  
+  # Grid size for segment everything (more points = more masks but slower)
+  points_per_side: 32
+  
+  # Confidence threshold for keeping masks
+  detection_threshold: 0.5
+  
+  # IoU threshold for filtering overlapping masks
+  iou_threshold: 0.7

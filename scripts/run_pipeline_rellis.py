@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -284,7 +285,7 @@ def run_on_rellis(
     Returns:
         List of per-image result dicts.
     """
-    rellis_path = Path(rellis_dir)
+    rellis_path = Path(os.path.expanduser(rellis_dir))
     seq_dir = rellis_path / f"RELLIS-3D_{sequence}"
     img_dir = seq_dir / "pylon_camera_node"
 
@@ -440,7 +441,7 @@ def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run uncertainty pipeline on RELLIS-3D images")
     p.add_argument(
         "--rellis_dir",
-        default="/Users/julih/Documents/datasets/RELLIS-3D",
+        default="~/Documents/datasets/RELLIS-3D",
         help="Path to RELLIS-3D root (containing RELLIS-3D_00/ etc.)",
     )
     p.add_argument("--sequence", default="00", help="Sequence number string (default: 00)")

@@ -238,7 +238,7 @@ def load_rugd_split(
     Returns:
         List of RUGDSample objects.
     """
-    root = Path(data_path)
+    root = Path(os.path.expanduser(data_path))
     if not root.exists():
         raise FileNotFoundError(
             f"RUGD data path not found: {root}\n"

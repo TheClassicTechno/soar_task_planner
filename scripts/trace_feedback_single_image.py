@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -31,7 +32,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from system.env_uncertainty.map_updater import parse_user_response_rich
 from system.env_uncertainty.user_profile import UserProfile
 
-RUGD_DIR = Path("/Users/julih/Documents/datasets/rugd/RUGD_frames-with-annotations")
+RUGD_DIR = Path(os.path.expanduser(os.environ.get("RUGD_DATA_PATH", "~/Documents/datasets/rugd"))) / "RUGD_frames-with-annotations"
 CONFIG_PATH = PROJECT_ROOT / "system" / "env_uncertainty" / "config.yaml"
 
 

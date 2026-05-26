@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -208,7 +209,7 @@ def run_on_rugd(
     Returns:
         List of result dicts (one per image).
     """
-    rugd_path = Path(rugd_dir)
+    rugd_path = Path(os.path.expanduser(rugd_dir))
     seq_path = rugd_path / sequence
     if not seq_path.exists():
         print(f"ERROR: sequence directory not found: {seq_path}")
@@ -323,7 +324,7 @@ def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run uncertainty pipeline on RUGD images")
     p.add_argument(
         "--rugd_dir",
-        default="/Users/julih/Documents/datasets/rugd/RUGD_frames-with-annotations",
+        default="~/Documents/datasets/rugd/RUGD_frames-with-annotations",
         help="Path to RUGD_frames-with-annotations/",
     )
     p.add_argument("--sequence", default="trail-5", help="Sequence name (default: trail-5)")

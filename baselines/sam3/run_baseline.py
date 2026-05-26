@@ -93,6 +93,7 @@ def run(args: argparse.Namespace) -> None:
         raise ValueError(
             "RUGD directory not specified. Use --rugd_dir or set RUGD_DATA_PATH in .env"
         )
+    rugd_dir = os.path.expanduser(rugd_dir)
 
     print(f"\n[SAM3 Baseline] Loading RUGD {args.split} split from: {rugd_dir}")
     samples = load_rugd_split(rugd_dir, split=args.split)

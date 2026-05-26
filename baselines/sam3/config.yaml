@@ -3,7 +3,7 @@
 # to cover all 5 uncertainty types in our research framework.
 # Mapping to RUGD 24-class IDs is in data_loader.py::RUGD_CLASS_MAP.
 
-nav_stack_path: "/Users/julih/Documents/navigation_stack"
+nav_stack_path: "~/Documents/navigation_stack"
 
 sam3:
   # HuggingFace model ID — requires approved access at huggingface.co/facebook/sam3
@@ -47,7 +47,7 @@ sam3:
 
 # RUGD dataset paths — override via .env RUGD_DATA_PATH
 rugd:
-  data_path: "/Users/julih/Documents/datasets/rugd"
+  data_path: "~/Documents/datasets/rugd"
   # dataset-tools downloads into this structure:
   #   {data_path}/train/img/   + {data_path}/train/ann/
   #   {data_path}/val/img/     + {data_path}/val/ann/

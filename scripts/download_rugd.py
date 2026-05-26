@@ -22,7 +22,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Download RUGD via dataset-tools")
     p.add_argument(
         "--output_dir",
-        default=os.environ.get("RUGD_DATA_PATH", "/Users/julih/Documents/datasets/rugd"),
+        default=os.environ.get("RUGD_DATA_PATH", "~/Documents/datasets/rugd"),
         help="Where to store the dataset (default: RUGD_DATA_PATH env or ~/Documents/datasets/rugd)",
     )
     return p.parse_args()
@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    out = Path(args.output_dir)
+    out = Path(os.path.expanduser(args.output_dir))
     out.mkdir(parents=True, exist_ok=True)
 
     print(f"Downloading RUGD to: {out}")

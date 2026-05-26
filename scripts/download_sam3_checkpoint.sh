@@ -11,11 +11,11 @@
 #   bash scripts/download_sam3_checkpoint.sh
 #
 # The checkpoint will be saved to the path in baselines/sam3/config.yaml:
-#   /Users/julih/Documents/navigation_stack/ws/src/perception/ckpt/sam3/
+#   ~/Documents/navigation_stack/ws/src/perception/ckpt/sam3/
 
 set -e
 
-CKPT_DIR="${SAM3_CKPT_PATH:-/Users/julih/Documents/navigation_stack/ws/src/perception/ckpt/sam3}"
+CKPT_DIR="${SAM3_CKPT_PATH:-$HOME/Documents/navigation_stack/ws/src/perception/ckpt/sam3}"
 
 echo "Downloading SAM3 checkpoint to: $CKPT_DIR"
 mkdir -p "$CKPT_DIR"
@@ -25,10 +25,10 @@ import os
 from pathlib import Path
 from huggingface_hub import hf_hub_download
 
-ckpt_dir = Path(os.environ.get(
+ckpt_dir = Path(os.path.expanduser(os.environ.get(
     "SAM3_CKPT_PATH",
-    "/Users/julih/Documents/navigation_stack/ws/src/perception/ckpt/sam3"
-))
+    "~/Documents/navigation_stack/ws/src/perception/ckpt/sam3"
+)))
 ckpt_dir.mkdir(parents=True, exist_ok=True)
 
 # Main model checkpoint

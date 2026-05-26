@@ -59,6 +59,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -69,7 +70,7 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-RUGD_DIR = Path("/Users/julih/Documents/datasets/rugd/RUGD_frames-with-annotations")
+RUGD_DIR = Path(os.path.expanduser(os.environ.get("RUGD_DATA_PATH", "~/Documents/datasets/rugd"))) / "RUGD_frames-with-annotations"
 CONFIG_PATH = str(PROJECT_ROOT / "system" / "env_uncertainty" / "config.yaml")
 
 
