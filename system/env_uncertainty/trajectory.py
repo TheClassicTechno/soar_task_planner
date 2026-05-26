@@ -1,10 +1,18 @@
 """
 Candidate trajectory generation and traversability scoring.
 
-The robot considers three simulated trajectories through each scene:
-  - forward:    straight line from robot position to scene center-top
-  - left_arc:   arc curving from center to left edge of scene
-  - right_arc:  arc curving from center to right edge of scene
+Two generators are provided:
+
+  TrajectoryGenerator         — original fixed-geometry generator.  Produces
+                                 three paths (forward, left_arc, right_arc) from
+                                 the bottom-center of the image toward the top.
+                                 Used when no explicit navigation goal is available.
+
+  GoalDirectedTrajectoryGenerator — goal-directed generator (May 19 mentor
+                                 feedback).  Given an explicit goal pixel, produces
+                                 three quadratic Bézier paths that all lead toward
+                                 that goal: one straight and two with lateral detours.
+                                 Use this when the robot has a navigation goal.
 
 Trajectories are represented as sequences of (y, x) pixel coordinates —
 a simplified 2D model of the robot's footprint over the image plane.
@@ -175,4 +183,163 @@ class TrajectoryGenerator:
         # Clamp to image bounds
         ys = np.clip(ys, 0, self._h - 1)
         xs = np.clip(xs, 0, self._w - 1)
+        return [(int(y), int(x)) for y, x in zip(ys, xs)]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Goal-directed trajectory generator (May 19 mentor requirement)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class GoalDirectedTrajectoryGenerator:
+    """
+    Generates candidate trajectories that all lead toward a specified goal pixel.
+
+    Per mentor feedback (May 19 meeting): the robot should have a navigation goal
+    and evaluate uncertainty along the path TO that goal — not along arbitrary
+    directions. This class replaces the fixed forward/left_arc/right_arc geometry
+    when the robot knows where it wants to go.
+
+    Three path variants via quadratic Bézier curves:
+      "direct"        — straight line from start to goal (zero curvature)
+      "left_detour"   — curves left of the direct line, then to goal
+      "right_detour"  — curves right of the direct line, then to goal
+
+    The lateral offset for detour paths equals detour_fraction * path_length,
+    so curvature naturally scales with how far away the goal is.
+
+    All three paths start and end at the same pixels; they only differ in the
+    intermediate waypoints. The runner scores each for traversability uncertainty
+    and picks the safest one.
+
+    Args:
+        image_height:    Image height in pixels.
+        image_width:     Image width in pixels.
+        n_waypoints:     Waypoints per trajectory (must be >= 2).
+        detour_fraction: Lateral offset as a fraction of path length (default 0.25).
+    """
+
+    def __init__(
+        self,
+        image_height: int,
+        image_width: int,
+        n_waypoints: int = 20,
+        detour_fraction: float = 0.25,
+    ) -> None:
+        if n_waypoints < 2:
+            raise ValueError("n_waypoints must be at least 2")
+        self._h = image_height
+        self._w = image_width
+        self._n = n_waypoints
+        self._detour = detour_fraction
+
+    def generate_toward_goal(
+        self,
+        start_pixel: Tuple[int, int],
+        goal_pixel: Tuple[int, int],
+    ) -> List[Trajectory]:
+        """
+        Return three candidate trajectories from start_pixel to goal_pixel.
+
+        The detour paths use a quadratic Bézier curve with a control point
+        offset perpendicular to the start→goal direction by detour_fraction
+        of the total path length. This gives smooth, predictable curvature.
+
+        Args:
+            start_pixel: (y, x) current robot position in image coordinates.
+            goal_pixel:  (y, x) navigation goal in image coordinates.
+
+        Returns:
+            List of three unscored Trajectory objects.
+        """
+        y0, x0 = float(start_pixel[0]), float(start_pixel[1])
+        y1, x1 = float(goal_pixel[0]), float(goal_pixel[1])
+
+        mid_y = (y0 + y1) / 2.0
+        mid_x = (x0 + x1) / 2.0
+
+        # Unit perpendicular to start→goal (90° counter-clockwise rotation)
+        dy, dx = y1 - y0, x1 - x0
+        path_length = float(np.sqrt(dy**2 + dx**2)) + 1e-6
+        perp_y = -dx / path_length
+        perp_x = dy / path_length
+
+        offset = self._detour * path_length
+        left_ctrl = (mid_y + offset * perp_y, mid_x + offset * perp_x)
+        right_ctrl = (mid_y - offset * perp_y, mid_x - offset * perp_x)
+
+        return [
+            Trajectory(
+                name="direct",
+                waypoints=self._line(y0, x0, y1, x1),
+            ),
+            Trajectory(
+                name="left_detour",
+                waypoints=self._bezier((y0, x0), left_ctrl, (y1, x1)),
+            ),
+            Trajectory(
+                name="right_detour",
+                waypoints=self._bezier((y0, x0), right_ctrl, (y1, x1)),
+            ),
+        ]
+
+    def score_trajectory(
+        self, traj: Trajectory, tmap: TraversabilityMap
+    ) -> Trajectory:
+        """
+        Score a trajectory against a traversability map.
+
+        Same logic as TrajectoryGenerator.score_trajectory — computes mean/min
+        traversability and detects unknown regions (score == 0.0).
+        """
+        scores = [tmap.score_at(y, x) for y, x in traj.waypoints]
+        mean_t = float(np.mean(scores)) if scores else 0.0
+        min_t = float(np.min(scores)) if scores else 0.0
+        has_unknown = any(s == 0.0 for s in scores)
+        return Trajectory(
+            name=traj.name,
+            waypoints=traj.waypoints,
+            mean_traversability=mean_t,
+            min_traversability=min_t,
+            passes_through_unknown=has_unknown,
+        )
+
+    def select_best_trajectory(
+        self, trajectories: List[Trajectory]
+    ) -> Optional[Trajectory]:
+        """
+        Choose the safest trajectory (safety-first: highest min_traversability
+        among paths that avoid all unknown regions).
+
+        Returns None if every path passes through an unknown region.
+        """
+        safe_paths = [t for t in trajectories if not t.passes_through_unknown]
+        if not safe_paths:
+            return None
+        return max(safe_paths, key=lambda t: t.min_traversability)
+
+    # ── Private helpers ───────────────────────────────────────────────────────
+
+    def _line(
+        self, y0: float, x0: float, y1: float, x1: float
+    ) -> List[Tuple[int, int]]:
+        ys = np.clip(np.linspace(y0, y1, self._n), 0, self._h - 1).astype(int)
+        xs = np.clip(np.linspace(x0, x1, self._n), 0, self._w - 1).astype(int)
+        return [(int(y), int(x)) for y, x in zip(ys, xs)]
+
+    def _bezier(
+        self,
+        p0: Tuple[float, float],
+        p1: Tuple[float, float],
+        p2: Tuple[float, float],
+    ) -> List[Tuple[int, int]]:
+        """
+        Quadratic Bézier from p0 to p2 via control point p1.
+
+        B(t) = (1-t)² p0 + 2(1-t)t p1 + t² p2,  t ∈ [0, 1]
+        """
+        t = np.linspace(0.0, 1.0, self._n)
+        ys = (1 - t)**2 * p0[0] + 2 * (1 - t) * t * p1[0] + t**2 * p2[0]
+        xs = (1 - t)**2 * p0[1] + 2 * (1 - t) * t * p1[1] + t**2 * p2[1]
+        ys = np.clip(ys, 0, self._h - 1).astype(int)
+        xs = np.clip(xs, 0, self._w - 1).astype(int)
         return [(int(y), int(x)) for y, x in zip(ys, xs)]
