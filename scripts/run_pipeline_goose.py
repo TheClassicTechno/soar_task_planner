@@ -357,6 +357,57 @@ def _simulate_gt_feedback(runner, label_map: np.ndarray, id_to_vocab: Dict[int, 
     return [f"{v}={'safe' if t else 'unsafe'}" for v, t in seen.items()]
 
 
+# ── Safety-rate helper ───────────────────────────────────────────────────────
+
+DANGER_THRESHOLD = 0.20  # GT min traversability below this → "dangerous frame"
+
+
+def _compute_gt_min_trav(
+    label_img: np.ndarray,
+    goal_pixel: tuple,
+    h: int,
+    w: int,
+    id_to_vocab: Dict[int, str],
+) -> Optional[float]:
+    """
+    Compute the minimum GT traversability along the direct Bézier path to goal.
+
+    Uses the GOOSE ground-truth label map (uint8 pixel values = class IDs) to
+    determine actual terrain traversability at each waypoint on the planned path.
+    This gives a per-frame "ground truth safety" signal independent of the robot's
+    own uncertainty estimate — used to compute safety_rate.
+
+    Args:
+        label_img:   GT semantic label map, uint8, same H×W as the RGB image.
+        goal_pixel:  (row, col) goal location in image coordinates.
+        h, w:        Image dimensions.
+        id_to_vocab: Mapping from GOOSE class ID (int) → our vocabulary label (str).
+
+    Returns:
+        Minimum traversability across all 20 direct-path waypoints, or None if
+        the trajectory cannot be generated.
+    """
+    from system.env_uncertainty.trajectory import GoalDirectedTrajectoryGenerator
+
+    start = (h - 1, w // 2)
+    gen = GoalDirectedTrajectoryGenerator(h, w, n_waypoints=20)
+    trajs = gen.generate_toward_goal(start, goal_pixel)
+    if not trajs:
+        return None
+
+    # Use the "direct" trajectory — straight line to goal (index 0)
+    direct = trajs[0]
+    travs = []
+    for py, px in direct.waypoints:
+        py_c = int(np.clip(py, 0, h - 1))
+        px_c = int(np.clip(px, 0, w - 1))
+        class_id = int(label_img[py_c, px_c])
+        vocab_label = id_to_vocab.get(class_id, "unknown")
+        travs.append(get_traversability(vocab_label))
+
+    return float(min(travs)) if travs else None
+
+
 # ── Main pipeline function ────────────────────────────────────────────────────
 
 def run_on_goose(
@@ -434,6 +485,7 @@ def run_on_goose(
 
     results = []
     n_proceed = n_ask = n_stop = 0
+    n_dangerous = n_safe_on_dangerous = 0
 
     for img_path in images:
         img = _load_image(img_path)
@@ -470,6 +522,12 @@ def run_on_goose(
         elif action == "ASK":      n_ask += 1
         else:                      n_stop += 1
 
+        gt_min_trav = _compute_gt_min_trav(lbl, goal_pixel, h, w, id_to_vocab)
+        if gt_min_trav is not None and gt_min_trav < DANGER_THRESHOLD:
+            n_dangerous += 1
+            if action in ("ASK", "STOP"):
+                n_safe_on_dangerous += 1
+
         if use_cross_frame:
             _simulate_gt_feedback(runner, lbl, id_to_vocab)
 
@@ -497,13 +555,23 @@ def run_on_goose(
             "goal_pixel": list(goal_pixel),
             "elapsed_ms": round(elapsed_ms, 1),
             "cross_frame_labels_known": runner.terrain_knowledge.n_labels_known,
+            "gt_min_trav": round(gt_min_trav, 4) if gt_min_trav is not None else None,
+            "gt_is_dangerous": (gt_min_trav is not None and gt_min_trav < DANGER_THRESHOLD),
         })
 
     total = len(results)
+    safety_rate = round(n_safe_on_dangerous / n_dangerous, 4) if n_dangerous else None
     print(f"\n{'=' * 70}")
     print(f"Summary: {total} images | PROCEED={n_proceed}  ASK={n_ask}  STOP={n_stop}")
     if total:
         print(f"Help rate: {(n_ask + n_stop) / total:.1%}")
+    if n_dangerous:
+        print(
+            f"Safety rate: {safety_rate:.1%}  "
+            f"({n_safe_on_dangerous}/{n_dangerous} dangerous frames correctly caught)"
+        )
+    else:
+        print("Safety rate: n/a (no GT-dangerous frames found in this run)")
 
     if use_cross_frame and runner.terrain_knowledge.n_labels_known > 0:
         print(f"\n{runner.terrain_knowledge.summary()}")
@@ -522,6 +590,9 @@ def run_on_goose(
             "n_ask": n_ask,
             "n_stop": n_stop,
             "help_rate": round((n_ask + n_stop) / total, 4) if total else 0.0,
+            "n_dangerous_frames": n_dangerous,
+            "n_safe_on_dangerous": n_safe_on_dangerous,
+            "safety_rate": safety_rate,
             "per_image": results,
         }
         Path(save_json).parent.mkdir(parents=True, exist_ok=True)
