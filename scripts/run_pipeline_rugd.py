@@ -187,6 +187,7 @@ def run_on_rugd(
     config_path: Optional[str] = None,
     goal_row_fraction: float = 0.20,  # goal is at top 20% of the image
     persistent_gp: bool = False,       # if True, GP accumulates across frames
+    use_real_models: bool = False,     # if True, load and run real SAM2 and SAM3 models
 ) -> List[dict]:
     """
     Run the uncertainty pipeline on RUGD images and print decisions.
@@ -205,20 +206,30 @@ def run_on_rugd(
                            relative pixel coordinates shift between frames — the same pixel (row,
                            col) maps to different real-world terrain as the robot moves forward.
                            Use persistent=True only when frames are nearly co-located.
+        use_real_models:   If True, load and run real SAM2 and SAM3 models instead of HSV heuristic.
 
     Returns:
         List of result dicts (one per image).
     """
     rugd_path = Path(os.path.expanduser(rugd_dir))
     seq_path = rugd_path / sequence
-    if not seq_path.exists():
-        print(f"ERROR: sequence directory not found: {seq_path}")
+    if seq_path.exists() and seq_path.is_dir():
+        images = sorted(seq_path.glob("*.png"))[:n_images]
+    else:
+        # Fallback to flat layout: e.g. <rugd_path>/val/img/<sequence>_*.png
+        # Check subfolders in order: val/img, or flat directly in rugd_path
+        images = []
+        for sub in ["val/img", ""]:
+            flat_dir = rugd_path / sub
+            if flat_dir.exists():
+                images = sorted(flat_dir.glob(f"{sequence}_*.png"))[:n_images]
+                if images:
+                    break
+
+    if not images:
+        print(f"ERROR: no PNG images found for sequence '{sequence}' in {rugd_path}")
         sys.exit(1)
 
-    images = sorted(seq_path.glob("*.png"))[:n_images]
-    if not images:
-        print(f"ERROR: no PNG images found in {seq_path}")
-        sys.exit(1)
 
     if config_path is None:
         config_path = str(
@@ -233,7 +244,11 @@ def run_on_rugd(
         name=f"RUGD eval ({verbosity})",
     )
 
-    runner = _make_mock_runner(config_path, verbosity)
+    if use_real_models:
+        from system.env_uncertainty.runner import EnvironmentalUncertaintyRunner
+        runner = EnvironmentalUncertaintyRunner(config_path=config_path, use_real_models=True)
+    else:
+        runner = _make_mock_runner(config_path, verbosity)
 
     results = []
     n_proceed = n_ask = n_stop = 0
@@ -343,6 +358,12 @@ def _parse_args() -> argparse.Namespace:
         default=False,
         help="Keep GP map across frames (default: reset per frame for correctness)",
     )
+    p.add_argument(
+        "--use_real_models",
+        action="store_true",
+        default=False,
+        help="Use real SAM3/SAM2 models instead of color heuristic",
+    )
     return p.parse_args()
 
 
@@ -356,4 +377,5 @@ if __name__ == "__main__":
         save_json=args.save_json,
         config_path=args.config,
         persistent_gp=args.persistent_gp,
+        use_real_models=args.use_real_models,
     )

@@ -102,12 +102,14 @@ class EnvironmentalUncertaintyRunner:
         config_path: str,
         detector: Optional[EnvironmentalUncertaintyDetector] = None,
         llm: Optional[Any] = None,
+        use_real_models: bool = False,
     ):
         """
         Args:
-            config_path: Path to system/env_uncertainty/config.yaml.
-            detector:    Pre-built detector (for testing with mocks).
-            llm:         Optional LLMInterface for LLM-mode question generation.
+            config_path:     Path to system/env_uncertainty/config.yaml.
+            detector:        Pre-built detector (for testing with mocks).
+            llm:             Optional LLMInterface for LLM-mode question generation.
+            use_real_models: If True, dynamically loads and uses real SAM2 and SAM3 models.
         """
         with open(config_path) as f:
             self._config = yaml.safe_load(f)
@@ -126,7 +128,36 @@ class EnvironmentalUncertaintyRunner:
         if llm is not None:
             q_mode = "llm"
 
-        self._detector = detector or EnvironmentalUncertaintyDetector()
+        if use_real_models and detector is None:
+            from pathlib import Path
+            project_root = Path(config_path).resolve().parent.parent.parent
+            sam3_cfg_path = str(project_root / "baselines" / "sam3" / "config.yaml")
+            sam2_cfg_path = str(project_root / "baselines" / "sam2" / "config.yaml")
+
+            # Dynamically import baseline classes to avoid CUDA/weights dependency during CPU tests
+            from baselines.sam3.sam3_standalone import SAM3Baseline
+            from baselines.sam2.sam2_standalone import SAM2Baseline
+
+            print(f"[EnvironmentalUncertaintyRunner] Loading real SAM3 baseline from: {sam3_cfg_path}")
+            sam3_model = SAM3Baseline(config_path=sam3_cfg_path)
+
+            print(f"[EnvironmentalUncertaintyRunner] Loading real SAM2 baseline from: {sam2_cfg_path}")
+            sam2_model = SAM2Baseline(config_path=sam2_cfg_path)
+
+            det_cfg = self._config.get("detector", {})
+            overlap_th = det_cfg.get("overlap_threshold", 0.30)
+            min_unk_pixel_frac = det_cfg.get("min_unknown_pixel_fraction", 0.02)
+
+            self._detector = EnvironmentalUncertaintyDetector(
+                sam3_model=sam3_model,
+                sam2_model=sam2_model,
+                overlap_threshold=overlap_th,
+                min_unknown_pixel_fraction=min_unk_pixel_frac,
+                sam3_queries=sam3_model.queries,
+            )
+        else:
+            self._detector = detector or EnvironmentalUncertaintyDetector()
+
         self._question_gen = QuestionGenerator(mode=q_mode, llm=llm)
         self._map_updater = MapUpdater()
         self._gp_map = GPTraversabilityMap()
