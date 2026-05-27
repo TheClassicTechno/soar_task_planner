@@ -210,7 +210,7 @@ class EnvironmentalUncertaintyDetector:
 
     def _find_unknown_regions(
         self,
-        sam2_output: List[Dict],
+        sam2_output: Any,
         known_coverage: np.ndarray,
         h: int,
         w: int,
@@ -230,7 +230,15 @@ class EnvironmentalUncertaintyDetector:
         total_pixels = h * w
         unknown: List[RegionInfo] = []
 
-        for item in sam2_output:
+        # Convert dict format to list-of-dicts for compatibility if needed
+        if isinstance(sam2_output, dict):
+            masks = sam2_output.get("masks", np.zeros((0, h, w), dtype=bool))
+            scores = sam2_output.get("scores", np.zeros(0, dtype=float))
+            items = [{"mask": m, "score": s} for m, s in zip(masks, scores)]
+        else:
+            items = sam2_output
+
+        for item in items:
             mask = np.asarray(item.get("mask", np.zeros((h, w), dtype=bool)), dtype=bool)
             score = float(item.get("score", 0.0))
             region_pixels = int(np.sum(mask))

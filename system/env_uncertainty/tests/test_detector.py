@@ -279,3 +279,35 @@ def test_small_sam2_region_filtered_by_min_frac():
     )
     result = det.detect(IMAGE)
     assert result.unknown_regions == []
+
+
+def test_detect_sam2_dictionary_format_supported():
+    h, w = H, W
+    sam3_mock = MagicMock()
+    sam3_mock.segment.return_value = {
+        "masks": np.zeros((0, h, w), dtype=bool),
+        "labels": np.zeros(0, dtype=np.int32),
+        "scores": np.zeros(0, dtype=np.float32),
+    }
+
+    # Create SAM2 mock returning Dict format instead of List[Dict]
+    sam2_region = np.zeros((h, w), dtype=bool)
+    sam2_region[h // 2:, :] = True     # bottom half unknown
+    sam2_mock = MagicMock()
+    sam2_mock.segment_everything.return_value = {
+        "masks": sam2_region[np.newaxis, :, :],
+        "scores": np.array([0.85], dtype=np.float32),
+        "inference_time_s": 0.05,
+    }
+
+    det = EnvironmentalUncertaintyDetector(
+        sam3_model=sam3_mock,
+        sam2_model=sam2_mock,
+        overlap_threshold=0.3,
+        min_unknown_pixel_fraction=0.01,
+    )
+    result = det.detect(IMAGE)
+    assert len(result.unknown_regions) == 1
+    assert result.unknown_regions[0].label == "unknown"
+    assert result.unknown_regions[0].confidence == pytest.approx(0.85)
+    assert np.array_equal(result.unknown_regions[0].mask, sam2_region)
