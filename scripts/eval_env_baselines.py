@@ -447,22 +447,28 @@ class OurSystem:
     """Full pipeline: GP LCB + Dirichlet + goal-directed trajectories."""
     name = "our_system"
 
-    def __init__(self, config_path: str):
+    def __init__(self, config_path: str, use_real_models: bool = False):
         from system.env_uncertainty.runner import EnvironmentalUncertaintyRunner
         from system.env_uncertainty.user_profile import UserProfile
 
-        class _Det:
-            def detect(self, image):
-                return _color_detect(image)
+        if use_real_models:
+            self._runner = EnvironmentalUncertaintyRunner(
+                config_path=config_path, use_real_models=True
+            )
+        else:
+            class _Det:
+                def detect(self, image):
+                    return _color_detect(image)
 
-        self._runner = EnvironmentalUncertaintyRunner(
-            config_path=config_path, detector=_Det()
-        )
+            self._runner = EnvironmentalUncertaintyRunner(
+                config_path=config_path, detector=_Det()
+            )
         self._profile = UserProfile(
             user_id="eval", verbosity="standard",
             expertise="intermediate", preferred_format="question",
             name="Eval",
         )
+
 
     def decide(self, detection, h, w, goal_pixel):
         # We already ran detection externally — but runner re-runs it internally.
@@ -479,7 +485,7 @@ class OurSystem:
 
 # ── Evaluation loop ───────────────────────────────────────────────────────────
 
-def _eval_baseline(baseline, images: List[Path]) -> Dict:
+def _eval_baseline(baseline, images: List[Path], use_real_models: bool = False, runner_for_detection = None) -> Dict:
     n_ask = n_proceed = n_stop = 0
     question_lens = []
     cvar_values: List[float] = []
@@ -497,13 +503,17 @@ def _eval_baseline(baseline, images: List[Path]) -> Dict:
         t0 = time.perf_counter()
         if isinstance(baseline, OurSystem):
             action, question = baseline.run_on_image(img, goal_pixel)
-        elif is_cvar:
-            detection = _color_detect(img)
-            action, question, cvar_val = baseline.decide(detection, h, w, goal_pixel)
-            cvar_values.append(cvar_val)
         else:
-            detection = _color_detect(img)
-            action, question = baseline.decide(detection, h, w, goal_pixel)
+            if use_real_models and runner_for_detection is not None:
+                detection = runner_for_detection._detector.detect(img)
+            else:
+                detection = _color_detect(img)
+
+            if is_cvar:
+                action, question, cvar_val = baseline.decide(detection, h, w, goal_pixel)
+                cvar_values.append(cvar_val)
+            else:
+                action, question = baseline.decide(detection, h, w, goal_pixel)
         total_ms += (time.perf_counter() - t0) * 1000
 
         if action == "ASK":    n_ask += 1
@@ -534,20 +544,39 @@ def run_comparison(
     n_images: int = 20,
     threshold: float = 0.60,
     alpha: float = 0.10,
+    use_real_models: bool = False,
 ) -> None:
-    seq_dir = RUGD_DIR / sequence
+    # Resolve dataset path / layout
+    rugd_path = Path(os.path.expanduser(os.environ.get("RUGD_DATA_PATH", "~/Documents/datasets/rugd")))
+    
+    # Try directory layout first
+    seq_dir = rugd_path / "RUGD_frames-with-annotations" / sequence
     if not seq_dir.exists():
-        print(f"ERROR: {seq_dir} not found")
-        sys.exit(1)
+        seq_dir = rugd_path / "val" / "img" / sequence
 
-    images = sorted(seq_dir.glob("*.png"))[:n_images]
+    if seq_dir.exists() and seq_dir.is_dir():
+        images = sorted(seq_dir.glob("*.png"))[:n_images]
+    else:
+        # Fallback to flat layout
+        flat_dir = rugd_path / "val" / "img"
+        if not flat_dir.exists():
+            flat_dir = rugd_path / "RUGD_frames-with-annotations"
+        
+        if flat_dir.exists():
+            images = sorted(flat_dir.glob(f"{sequence}_*.png"))[:n_images]
+        else:
+            images = []
+
     if not images:
-        print(f"ERROR: no PNG images in {seq_dir}")
+        print(f"ERROR: no PNG images found for sequence '{sequence}' in {rugd_path}")
         sys.exit(1)
 
     print(f"\nEnv Uncertainty Baselines — {len(images)} images from '{sequence}'")
     print(f"  coverage_threshold: {threshold:.0%}   CVaR alpha: {alpha:.0%}")
     print(f"  CVaR thresholds: ask < 0.45, stop < 0.10\n")
+
+    our_sys = OurSystem(config_path=CONFIG_PATH, use_real_models=use_real_models)
+    runner_for_detection = our_sys._runner if use_real_models else None
 
     baselines = [
         AlwaysProceed(),
@@ -557,13 +586,13 @@ def run_comparison(
         CVaRGlobal(alpha=alpha),
         MaxUncertaintyExplorer(config_path=CONFIG_PATH),
         SimulatedGANav(),
-        OurSystem(config_path=CONFIG_PATH),
+        our_sys,
     ]
 
     rows = []
     for b in baselines:
         print(f"  Running {b.name} ...", end=" ", flush=True)
-        result = _eval_baseline(b, images)
+        result = _eval_baseline(b, images, use_real_models=use_real_models, runner_for_detection=runner_for_detection)
         rows.append(result)
         cvar_str = f"  avg_CVaR={result['avg_cvar']:.3f}" if result["avg_cvar"] is not None else ""
         print(f"done ({result['avg_ms_per_image']:.0f} ms/img){cvar_str}")
@@ -624,6 +653,12 @@ def _parse_args() -> argparse.Namespace:
         "--alpha", type=float, default=0.10,
         help="CVaR risk level α: fraction of worst-case waypoints averaged (default 0.10)",
     )
+    p.add_argument(
+        "--use_real_models",
+        action="store_true",
+        default=False,
+        help="Use real SAM3/SAM2 models instead of color heuristic",
+    )
     return p.parse_args()
 
 
@@ -634,4 +669,5 @@ if __name__ == "__main__":
         n_images=args.n_images,
         threshold=args.threshold,
         alpha=args.alpha,
+        use_real_models=args.use_real_models,
     )
