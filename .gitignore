@@ -29,6 +29,12 @@ docs/*.aux
 docs/*.log
 docs/*.pdf
 
+# Datasets — GOOSE (2.7 GB) and TartanGround (744 MB) are too large to commit
+data/datasets/
+
+# Auto-generated evaluation report
+docs/failure_examples.md
+
 # Large binary / dataset archives (never commit these)
 *.zip
 *.tar.gz
