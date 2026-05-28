@@ -386,3 +386,60 @@ class TestJointDecisionDataclass:
         jd = self._run("Navigate to the park bench directly ahead", 0.40)
         assert isinstance(jd.kappa_joint, float)
         assert jd.final_action == "ASK"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Both branches fire simultaneously
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestBothBranchesFire:
+    """
+    Both κ_I and κ_E exceed the ask threshold at the same time.
+
+    Setup:
+      instruction = "Go there"  → ambiguous_target → κ_I > 0.15
+      environment = 50% unknown → κ_E = 0.50/0.80 = 0.625 > 0.15
+    Expected:
+      final_action == "ASK"
+      kappa_joint == max(kappa_I, kappa_E) == kappa_E (env dominates)
+    """
+
+    def _setup(self):
+        unknown_mask = _top_mask(0.50)
+        unknown = _region("unknown", unknown_mask, traversability=0.0)
+        runner = _make_env_runner([], [unknown], unknown_coverage=0.50)
+        return _maker(runner)
+
+    def test_both_branches_fire_simultaneously(self):
+        maker = self._setup()
+        jd = maker.decide("Go there", IMAGE, scene_context="path forks ahead")
+
+        assert jd.final_action == "ASK", (
+            f"Expected ASK when both branches fire, got {jd.final_action}"
+        )
+        assert jd.kappa_I > 0.0, "κ_I should be positive for ambiguous instruction"
+        assert jd.kappa_E == pytest.approx(0.625, abs=0.01), (
+            f"κ_E should be 0.50/0.80=0.625 for 50% unknown coverage, got {jd.kappa_E}"
+        )
+        assert jd.kappa_joint == pytest.approx(max(jd.kappa_I, 0.625), abs=0.01), (
+            f"κ_joint should equal max(κ_I, κ_E), got {jd.kappa_joint}"
+        )
+
+    def test_kappa_joint_is_max_when_env_dominates(self):
+        # Use 70% unknown → κ_E = 0.70/0.80 = 0.875, which clearly exceeds κ_I ≈ 0.64
+        unknown_mask = _top_mask(0.70)
+        unknown = _region("unknown", unknown_mask, traversability=0.0)
+        runner = _make_env_runner([], [unknown], unknown_coverage=0.70)
+        maker = _maker(runner)
+        jd = maker.decide("Go there", IMAGE, scene_context="path forks ahead")
+
+        assert jd.kappa_E == pytest.approx(0.875, abs=0.01), (
+            f"κ_E should be 0.70/0.80=0.875, got {jd.kappa_E}"
+        )
+        assert jd.kappa_joint == pytest.approx(jd.kappa_E, abs=0.01), (
+            f"κ_joint should equal κ_E when env dominates, "
+            f"got κ_joint={jd.kappa_joint}, κ_E={jd.kappa_E}, κ_I={jd.kappa_I}"
+        )
+        assert jd.kappa_joint >= jd.kappa_I, (
+            f"max property: κ_joint={jd.kappa_joint} must be >= κ_I={jd.kappa_I}"
+        )
