@@ -328,25 +328,33 @@ def test_terrain_node_v2_is_same_class_as_terrain_node():
     assert TerrainNodeV2 is TerrainNode
 
 
-def test_upsert_label_informed_prior_sets_known_class_to_two():
-    # For a known SAM3 label, alpha[label] should be 2.0 (mild prior) and
-    # all other classes should remain 1.0 (uniform).
+def test_upsert_label_informed_prior_scales_with_confidence():
+    # For a known SAM3 label with default confidence=0.9, alpha[label] should
+    # equal 1 + 0.9 * 30 = 28.0 and all other classes should remain 1.0.
+    from system.env_uncertainty.scene_graph import _CONFIDENCE_PSEUDOCOUNT_SCALE
     sg = SceneGraph()
-    node = sg.upsert_region("grass", 50, 50, H, W)
+    node = sg.upsert_region("grass", 50, 50, H, W)  # default region_confidence=0.9
     grass_idx = TERRAIN_CLASSES.index("grass")
-    assert abs(node.dirichlet_alpha[grass_idx] - 2.0) < 1e-9
+    expected = 1.0 + 0.9 * _CONFIDENCE_PSEUDOCOUNT_SCALE
+    assert abs(node.dirichlet_alpha[grass_idx] - expected) < 1e-6
     for i, cls in enumerate(TERRAIN_CLASSES):
         if cls != "grass":
-            assert abs(node.dirichlet_alpha[i] - 1.0) < 1e-9, f"alpha[{cls}] should be 1.0"
+            assert abs(node.dirichlet_alpha[i] - 1.0) < 1e-6, f"alpha[{cls}] should be 1.0"
+
+    # Low-confidence detection → smaller pseudocount → higher entropy
+    node_low = sg.upsert_region("mud", 10, 10, H, W, region_confidence=0.30)
+    mud_idx = TERRAIN_CLASSES.index("mud")
+    expected_low = 1.0 + 0.30 * _CONFIDENCE_PSEUDOCOUNT_SCALE
+    assert abs(node_low.dirichlet_alpha[mud_idx] - expected_low) < 1e-6
 
 
 def test_upsert_unknown_label_uses_uniform_prior():
-    # "unknown" is in TERRAIN_CLASSES — it gets alpha=2.0 there.
-    # A label *not* in TERRAIN_CLASSES should get all-ones (pure uniform).
+    # "unknown" is always uniform regardless of confidence — it is a sentinel
+    # meaning "SAM3 found no class", so maximum entropy is the correct prior.
     sg = SceneGraph()
     node = sg.upsert_region("unknown", 50, 50, H, W)
-    unknown_idx = TERRAIN_CLASSES.index("unknown")
-    assert abs(node.dirichlet_alpha[unknown_idx] - 2.0) < 1e-9
+    for alpha_val in node.dirichlet_alpha:
+        assert abs(alpha_val - 1.0) < 1e-9, "unknown label must use flat uniform prior"
 
 
 def test_dirichlet_alpha_length_equals_k_classes():

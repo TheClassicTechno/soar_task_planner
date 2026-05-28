@@ -62,9 +62,35 @@ TERRAIN_CLASSES: List[str] = list(TRAVERSABILITY_SCORES.keys())
 K_CLASSES: int = len(TERRAIN_CLASSES)
 
 
+# Pseudocount scaling: alpha[detected] = 1 + confidence * SCALE.
+# At confidence=0.85 (typical mock): alpha≈26.5, entropy≈1.39 < ask_threshold(1.5).
+# At confidence=0.40 (uncertain SAM3): alpha≈13, entropy≈1.88 > ask_threshold → ASK.
+# At confidence=0.0 (unknown): alpha=1, entropy=log(K)≈2.56 → always ASK.
+_CONFIDENCE_PSEUDOCOUNT_SCALE: float = 30.0
+
+
 def _uniform_alpha() -> List[float]:
     """Return a flat Dirichlet prior: equal uncertainty over all terrain classes."""
     return [1.0] * K_CLASSES
+
+
+def _label_informed_alpha(label: str, confidence: float) -> List[float]:
+    """
+    Dirichlet prior informed by SAM3's label and confidence.
+
+    The detected class gets pseudocount = 1 + confidence * SCALE so that
+    high-confidence detections (>~0.73) produce entropy < ask_threshold(1.5)
+    and low-confidence detections keep entropy high — correctly triggering ASK.
+
+    Exception: "unknown" is a sentinel meaning "SAM3 found no matching class".
+    It always stays uniform (maximum entropy) so unknown regions always trigger
+    the semantic entropy ASK check regardless of how the detection was scored.
+    """
+    alpha = _uniform_alpha()
+    label_lower = label.lower()
+    if label_lower != "unknown" and label_lower in TERRAIN_CLASSES:
+        alpha[TERRAIN_CLASSES.index(label_lower)] = 1.0 + confidence * _CONFIDENCE_PSEUDOCOUNT_SCALE
+    return alpha
 
 
 class CertaintyLevel(Enum):
@@ -244,6 +270,7 @@ class SceneGraph:
         width: int,
         gp_mean: Optional[float] = None,
         gp_variance: Optional[float] = None,
+        region_confidence: float = 0.9,
     ) -> TerrainNode:
         """
         Create or update the TerrainNode for (label, cell).
@@ -252,13 +279,18 @@ class SceneGraph:
         and last_updated.  Does not downgrade certainty_level or user_confirmed.
 
         Args:
-            label:       Terrain class label.
-            pixel_y:     Representative row pixel for the region.
-            pixel_x:     Representative column pixel for the region.
-            height:      Image height.
-            width:       Image width.
-            gp_mean:     Override GP mean (None = use get_traversability default).
-            gp_variance: Override GP variance (None = use 0.0 default).
+            label:             Terrain class label.
+            pixel_y:           Representative row pixel for the region.
+            pixel_x:           Representative column pixel for the region.
+            height:            Image height.
+            width:             Image width.
+            gp_mean:           Override GP mean (None = use get_traversability default).
+            gp_variance:       Override GP variance (None = use 0.0 default).
+            region_confidence: SAM3 classification confidence ∈ [0, 1].
+                               Scales the Dirichlet pseudocount for the detected class.
+                               High confidence → concentrated Dirichlet → low entropy →
+                               no ASK.  Low confidence → flat Dirichlet → high entropy
+                               → triggers ASK via semantic entropy check.
 
         Returns:
             The created or updated TerrainNode.
@@ -283,13 +315,11 @@ class SceneGraph:
         initial_var = gp_variance if gp_variance is not None else 0.0
         level = CertaintyLevel.INFERRED if gp_mean is not None else CertaintyLevel.UNKNOWN
 
-        # Label-informed Dirichlet prior: SAM3's detected class gets pseudocount 2.0;
-        # all others start at 1.0.  This encodes mild confidence in SAM3's label
-        # while still allowing the user to override via update_from_user().
-        initial_alpha = _uniform_alpha()
+        # Confidence-informed Dirichlet prior: alpha[detected] = 1 + confidence * SCALE.
+        # High-confidence SAM3 label (≥0.73) → entropy < ask_threshold(1.5) → no ASK.
+        # Low-confidence label (<0.73) → entropy > 1.5 → triggers semantic entropy ASK.
         label_lower = label.lower()
-        if label_lower in TERRAIN_CLASSES:
-            initial_alpha[TERRAIN_CLASSES.index(label_lower)] = 2.0
+        initial_alpha = _label_informed_alpha(label_lower, region_confidence)
 
         node = TerrainNode(
             label=label_lower,
@@ -410,6 +440,7 @@ class SceneGraph:
                 width=width,
                 gp_mean=pred.mu,
                 gp_variance=pred.sigma ** 2,
+                region_confidence=getattr(region, "confidence", 0.9),
             )
 
             if trajectories:
