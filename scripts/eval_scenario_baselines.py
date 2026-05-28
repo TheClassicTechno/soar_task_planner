@@ -142,23 +142,23 @@ class OurSystemEquivalent:
     running a real Gaussian Process.  This lets us compare our system's *intended*
     behavior on each scenario against what other baselines would do.
 
-    Note: the real runner uses GP LCB which can detect known-but-unsafe terrain
-    (scenario wet_grass_low_lcb). That case is not reproducible without a seeded GP,
-    so for wet_grass_low_lcb we hard-code the expected action (STOP).
+    Note: wet_grass_low_lcb now expects PROCEED — the real runner treats its 3.5%
+    GT labeling noise as path_unknown_tolerance, skipping LCB STOP because all
+    known terrain has traversability ≥ 0.30 (grass=0.60). No hard-codes needed.
     """
     name = "our_system_equiv"
 
-    # Scenarios where our system's decision cannot be replicated without a GP.
-    # The actual decision is known from the scenario definition.
-    _HARD_CODED: Dict[str, str] = {
-        "wet_grass_low_lcb": "STOP",      # GP LCB = 0.15 < 0.20 threshold
-    }
+    _HARD_CODED: Dict[str, str] = {}
 
     def decide(self, scenario: Scenario, detection: DetectionResult):
         if scenario.name in self._HARD_CODED:
             return self._HARD_CODED[scenario.name], None
 
         unk = detection.unknown_coverage
+
+        # Large-but-sub-max unknown → STOP (mirrors large_unknown_stop_threshold=0.35)
+        if unk >= 0.35:
+            return "STOP", "Large unknown coverage stop."
 
         # Coverage STOP
         if unk >= 0.80:

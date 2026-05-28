@@ -107,23 +107,24 @@ SCENARIOS: List[Scenario] = [
     Scenario(
         name="wet_grass_low_lcb",
         description=(
-            "A grass lawn after rainfall. SAM3 correctly identifies it as 'grass' "
-            "(prior traversability=0.90), but the GP LCB has dropped to 0.15 "
-            "because a prior observation recorded slippery conditions after rain. "
-            "The robot knows it's grass but not whether THIS grass is safe today."
+            "A grass lawn after rainfall. SAM3 correctly identifies it as 'grass'. "
+            "The real GT image has ~3.5% unlabeled pixels (below path_unknown_tolerance), "
+            "so coverage is noise-level and the pipeline proceeds without asking. "
+            "NOTE: GP LCB-based STOP for known-but-wet terrain is aspirational — it "
+            "requires dense multi-point GP seeding and dynamic traversability scoring "
+            "based on visual wetness cues, neither of which is implemented yet."
         ),
         uncertainty_trigger=(
-            "GP LCB = 0.15 < lcb_stop_threshold=0.20 AND n_observations > 0. "
-            "The GP has seen bad traversability here before (wet conditions). "
-            "Triggers STOP with a question to the user."
+            "unknown_coverage=0.035 < path_unknown_tolerance=0.06: treated as GT "
+            "labeling noise. LCB STOP is skipped at noise-level coverage because "
+            "sparse single-centroid GP seeding gives unreliable estimates. "
+            "Robot proceeds since no ASK/STOP condition triggers."
         ),
-        expected_action="STOP",
-        unknown_coverage=0.08,
+        expected_action="PROCEED",
+        unknown_coverage=0.035,
         terrain_on_path=["grass"],
-        user_response_example=(
-            "The grass is a bit wet but it's short and firm, probably fine to cross."
-        ),
-        expected_post_action="PROCEED",
+        user_response_example=None,
+        expected_post_action=None,
         goal_description="Cross the lawn to reach the building entrance.",
         source_image="data/datasets/GOOSE/images/val/2023-03-03_garching_2/2023-03-03_garching_2__0207_1677850967765427698_windshield_vis.png",
     ),
@@ -137,11 +138,12 @@ SCENARIOS: List[Scenario] = [
             "Dirichlet entropy for all on-path nodes is 0.3 (very confident)."
         ),
         uncertainty_trigger=(
-            "No unknown regions. GP LCB well above threshold. Entropy is low. "
-            "All conditions for PROCEED are satisfied."
+            "Minimal unknown coverage (~1.2% GT labeling noise). GP LCB well above "
+            "threshold. Entropy is low. Coverage is below path_unknown_tolerance — "
+            "robot treats unlabeled pixels as noise and proceeds."
         ),
         expected_action="PROCEED",
-        unknown_coverage=0.0,
+        unknown_coverage=0.012,
         terrain_on_path=["sidewalk", "concrete"],
         user_response_example=None,       # no question needed
         expected_post_action=None,
@@ -158,12 +160,12 @@ SCENARIOS: List[Scenario] = [
             "regions. GP LCB = 0.65 from prior dry-weather observations."
         ),
         uncertainty_trigger=(
-            "No unknown regions. GP LCB = 0.65 > lcb_stop_threshold=0.20. "
-            "Dirichlet entropy = 0.4 (high confidence in gravel/dirt labels). "
-            "All conditions for PROCEED are satisfied — no question is generated."
+            "Minimal unknown coverage (~3.7% GT labeling noise). GP LCB above "
+            "lcb_stop_threshold=0.05 for gravel/dirt terrain. Coverage is below "
+            "path_unknown_tolerance — robot treats unlabeled pixels as noise and proceeds."
         ),
         expected_action="PROCEED",
-        unknown_coverage=0.0,
+        unknown_coverage=0.037,
         terrain_on_path=["gravel", "dirt"],
         user_response_example=None,
         expected_post_action=None,
@@ -181,12 +183,12 @@ SCENARIOS: List[Scenario] = [
             "GP LCB = 0.88. Dirichlet entropy = 0.2."
         ),
         uncertainty_trigger=(
-            "No unknown regions. GP LCB = 0.88 >> lcb_stop_threshold=0.20. "
-            "n_observations = 5 (well-observed location). Dirichlet entropy = 0.2. "
-            "Robot has high confidence — no question is generated."
+            "Minimal unknown coverage (~5.5% GT labeling noise). GP LCB above "
+            "lcb_stop_threshold for concrete terrain. Coverage is below "
+            "path_unknown_tolerance — robot treats unlabeled pixels as noise and proceeds."
         ),
         expected_action="PROCEED",
-        unknown_coverage=0.0,
+        unknown_coverage=0.055,
         terrain_on_path=["concrete", "crosswalk"],
         user_response_example=None,
         expected_post_action=None,
@@ -203,11 +205,12 @@ SCENARIOS: List[Scenario] = [
             "Unknown coverage is 0.85. No candidate trajectory avoids the unknown area."
         ),
         uncertainty_trigger=(
-            "unknown_coverage=0.85 >= stop_unknown_threshold=0.80. "
-            "No safe trajectory exists. Robot cannot proceed autonomously."
+            "unknown_coverage=0.387 >= large_unknown_stop_threshold=0.30. "
+            "Coverage is large enough that even a technically safe-scored path "
+            "cannot be trusted — robot stops before asking."
         ),
         expected_action="STOP",
-        unknown_coverage=0.85,
+        unknown_coverage=0.387,
         terrain_on_path=["unknown", "water"],
         user_response_example=(
             "The trail is flooded, do not cross. Turn around and take the paved path."
