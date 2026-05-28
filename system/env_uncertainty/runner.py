@@ -74,6 +74,12 @@ class EnvUncertaintyDecision:
     n_known_regions:      number of SAM3-identified regions
     n_unknown_regions:    number of SAM2 residual unknown regions
     unknown_world_coords: world coordinates (x, y) of unknown region centroids
+    target_node:          most uncertain on-path scene graph node (for S8 Dirichlet
+                          update). Set to the node with highest semantic_entropy()
+                          among on_path_nodes when robot_action == "ASK". None when
+                          proceeding (no update needed) or when no scene graph used.
+    decision_reason:      human-readable string explaining why this action was chosen.
+                          Useful for debugging and paper evaluation.
     """
 
     scene_id: str
@@ -86,6 +92,24 @@ class EnvUncertaintyDecision:
     n_known_regions: int
     n_unknown_regions: int
     unknown_world_coords: Optional[List[Tuple[float, float]]] = None
+    target_node: Optional["TerrainNode"] = None
+    decision_reason: str = ""
+
+
+def _decision_reason(action: str, result: "DetectionResult", best_lcb: Optional[float]) -> str:
+    """One-sentence explanation of why this action was chosen — for logs and paper evaluation."""
+    cov = result.unknown_coverage
+    if action == "STOP":
+        if cov >= 0.80:
+            return f"STOP: unknown_coverage={cov:.2f} exceeds stop_threshold=0.80"
+        if best_lcb is not None and best_lcb < 0.20:
+            return f"STOP: best path GP LCB={best_lcb:.3f} below lcb_stop_threshold=0.20 (known dangerous terrain)"
+        return f"STOP: all candidate paths pass through unknown regions (coverage={cov:.2f})"
+    if action == "ASK":
+        if cov >= 0.10:
+            return f"ASK: unknown_coverage={cov:.2f} above ask_threshold=0.10"
+        return "ASK: on-path scene graph node has high semantic entropy (terrain class unclear)"
+    return f"PROCEED: safe path found, unknown_coverage={cov:.2f} below ask_threshold=0.10"
 
 
 class EnvironmentalUncertaintyRunner:
@@ -119,6 +143,7 @@ class EnvironmentalUncertaintyRunner:
         self._stop_threshold = decision_cfg.get("stop_unknown_threshold", 0.80)
         self._entropy_threshold = decision_cfg.get("entropy_ask_threshold", 1.5)
         self._lcb_stop_threshold = decision_cfg.get("lcb_stop_threshold", 0.20)
+        self._path_unknown_tolerance = decision_cfg.get("path_unknown_tolerance", 0.0)
 
         traj_cfg = self._config.get("trajectory", {})
         self._n_waypoints = traj_cfg.get("n_waypoints", 20)
@@ -314,13 +339,31 @@ class EnvironmentalUncertaintyRunner:
         # Select best trajectory using GP LCB (pessimistic safety ranking)
         best, best_lcb = self._select_best_trajectory_lcb(scored_trajectories, h, w)
 
-        # Resolve on-path scene-graph nodes for Dirichlet entropy check
-        on_path_nodes: List[TerrainNode] = []
-        if scene_graph is not None and best is not None:
-            on_path_nodes = self._on_path_nodes(scene_graph, best, h, w)
+        # S4: Build or update scene graph from live detections.
+        # Calls update_from_gp() so every known region gets a TerrainNode whose
+        # Dirichlet is initialized from SAM3's confidence.  High-confidence regions
+        # (≥0.73) get low entropy → no entropy ASK.  Low-confidence regions stay
+        # high-entropy → correctly trigger ASK via the semantic entropy check in S5.
+        # If the caller supplies a scene_graph (multi-frame tracking), we update it
+        # in-place; otherwise a fresh per-frame graph is used.
+        _sg = scene_graph if scene_graph is not None else SceneGraph()
+        _sg.update_from_gp(
+            gp_map=self._gp_map,
+            regions=result.known_regions,
+            height=h,
+            width=w,
+            trajectories=scored_trajectories,
+        )
 
-        # Step 6: Determine robot action
-        action, question = self._decide_action(
+        # Resolve on-path scene-graph nodes for Dirichlet entropy check (S5) and
+        # Dirichlet update (S8).  Always non-empty now that the scene graph is built.
+        on_path_nodes: List[TerrainNode] = []
+        if best is not None:
+            on_path_nodes = self._on_path_nodes(_sg, best, h, w)
+
+        # Step 6: Determine robot action — also returns the target uncertain node
+        # so S8 (run_with_feedback) knows which node's Dirichlet to update.
+        action, question, target_node = self._decide_action(
             result, scored_trajectories, best, on_path_nodes,
             best_lcb=best_lcb, user_profile=user_profile,
         )
@@ -343,6 +386,8 @@ class EnvironmentalUncertaintyRunner:
             n_known_regions=len(result.known_regions),
             n_unknown_regions=len(result.unknown_regions),
             unknown_world_coords=unknown_world_coords,
+            target_node=target_node,
+            decision_reason=_decision_reason(action, result, best_lcb),
         )
 
     def _compute_world_coords(
@@ -507,6 +552,19 @@ class EnvironmentalUncertaintyRunner:
                         width=w,
                     )
 
+        # S8 Dirichlet update: update the specific uncertain node's class distribution.
+        # target_node is the most uncertain on-path TerrainNode that S5 identified —
+        # the node we were asking about. Apply conjugate prior update: alpha[label] +=
+        # label_confidence. This shifts the Dirichlet toward the user-confirmed class,
+        # lowering semantic_entropy() so the robot won't keep asking about the same node.
+        # Only updates when robot was in ASK state and a terrain label was parsed.
+        if (
+            parsed.terrain_label
+            and initial.target_node is not None
+            and initial.robot_action == "ASK"
+        ):
+            initial.target_node.update_from_user(parsed.terrain_label, parsed.label_confidence)
+
         # Cross-frame knowledge update: record this user response at the label level
         # so future frames benefit from the same confirmation without re-asking.
         # PersistentTerrainKnowledge is NOT reset between frames (unlike the GP),
@@ -644,8 +702,8 @@ class EnvironmentalUncertaintyRunner:
                         if key not in {(n.label, n.position_cell_id) for n in on_path_nodes}:
                             on_path_nodes.append(node)
 
-        # Step 6: Decide action
-        action, question = self._decide_action(
+        # Step 6: Decide action — also returns target uncertain node for S8
+        action, question, target_node = self._decide_action(
             result, scored_trajectories, best, on_path_nodes,
             best_lcb=best_lcb, user_profile=user_profile,
         )
@@ -660,6 +718,8 @@ class EnvironmentalUncertaintyRunner:
             question=question,
             n_known_regions=len(result.known_regions),
             n_unknown_regions=len(result.unknown_regions),
+            target_node=target_node,
+            decision_reason=_decision_reason(action, result, best_lcb),
         )
 
     def reset_world_knowledge(self) -> None:
@@ -877,7 +937,8 @@ class EnvironmentalUncertaintyRunner:
                              danger (e.g., ice, deep mud) even at low coverage.
 
         Returns:
-            (action_str, question_str_or_None)
+            (action_str, question_str_or_None, target_node_or_None)
+            target_node is the most uncertain on-path node (for S8 Dirichlet update).
         """
         if on_path_nodes is None:
             on_path_nodes = []
@@ -887,14 +948,28 @@ class EnvironmentalUncertaintyRunner:
         # instead of saying "unrecognized area" generically.
         top_k = self._top_k_from_nodes(on_path_nodes)
 
+        # The most uncertain on-path node — returned for S8 Dirichlet update.
+        # S5 identifies this node so S8 knows exactly which node's class
+        # distribution to update with user feedback (one node at a time).
+        target_node = (
+            max(on_path_nodes, key=lambda n: n.semantic_entropy())
+            if on_path_nodes else None
+        )
+
         profile = user_profile or DEFAULT_PROFILE
+
+        # Coverage small enough to be GT labeling noise: skip LCB STOP and the
+        # path-through-unknown guard below.  Sparse single-centroid GP seeding
+        # gives unreliable LCB estimates at this scale, so we trust known-region
+        # traversability instead.
+        path_noise = result.unknown_coverage < self._path_unknown_tolerance
 
         # Very large unknown area → STOP (robot cannot proceed safely)
         if result.unknown_coverage >= self._stop_threshold:
             question = self._question_gen.generate(
                 result, trajectories, user_profile=profile, top_k_classes=top_k
             )
-            return "STOP", question
+            return "STOP", question, target_node
 
         # High Dirichlet semantic entropy on planned path → ASK.
         # The robot doesn't know what terrain class it's heading into, so it
@@ -906,34 +981,45 @@ class EnvironmentalUncertaintyRunner:
             question = self._question_gen.generate(
                 result, trajectories, user_profile=profile, top_k_classes=top_k
             )
-            return "ASK", question
+            return "ASK", question, target_node
 
         # GP LCB-based STOP: best safe path has dangerously low traversability.
+        # path_noise can bypass this when the GP is merely uncertain (LCB ≥ 0)
+        # but NOT when LCB is negative — negative LCB signals genuinely dangerous
+        # terrain (traversability near 0), not just sparse-observation uncertainty.
         # Guard: n_observations > 0 prevents false STOPs from the uninformative
         # prior (prior LCB = 0.5 - 1.5*0.4 = -0.1 < threshold without any data).
+        # Bypass only when best_lcb indicates terrain is not genuinely dangerous.
+        # Dense-seeded dangerous terrain (e.g., adj_trav=0.03) gives LCB ≈ 0.02,
+        # while sparse-seeded safe terrain (gravel=0.70, grass=0.60) gives LCB ≥ 0.10.
+        # Floor=0.05 separates these cleanly. best_lcb=None (no safe trajectory found)
+        # is also safe to bypass — path_noise will then trigger PROCEED directly.
+        _LCB_NOISE_BYPASS_FLOOR = 0.05
+        lcb_noise_bypass = path_noise and (best_lcb is None or best_lcb >= _LCB_NOISE_BYPASS_FLOOR)
         if (
-            best_lcb is not None
+            not lcb_noise_bypass
+            and best_lcb is not None
             and self._gp_map.n_observations > 0
             and best_lcb < self._lcb_stop_threshold
         ):
             question = self._question_gen.generate(
                 result, trajectories, user_profile=profile, top_k_classes=top_k
             )
-            return "STOP", question
+            return "STOP", question, target_node
 
-        # No unknown regions, or unknown area is small and off-path → PROCEED
+        # No unknown regions, or unknown area is small and off-path → PROCEED.
+        # path_noise bypasses the path-through-unknown requirement for tiny coverage.
         if not result.has_unknown or (
             result.unknown_coverage < self._ask_threshold
-            and best_trajectory is not None
-            and not best_trajectory.passes_through_unknown
+            and (path_noise or (best_trajectory is not None and not best_trajectory.passes_through_unknown))
         ):
-            return "PROCEED", None
+            return "PROCEED", None, None
 
         # Unknown region exists and robot's path is affected → ASK
         question = self._question_gen.generate(
             result, trajectories, user_profile=profile, top_k_classes=top_k
         )
-        return "ASK", question
+        return "ASK", question, target_node
 
     def _top_k_from_nodes(
         self,

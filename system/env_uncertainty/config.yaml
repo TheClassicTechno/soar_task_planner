@@ -12,8 +12,16 @@ decision:
   entropy_ask_threshold: 1.5
   # Robot stops when the best safe trajectory's GP LCB score falls below this.
   # Applies only when GP has at least one observation (n_observations > 0).
-  # 0.20 = μ - 1.5σ < 0.20 signals dangerously low traversability (e.g., ice, deep mud).
+  # Guarded by path_unknown_tolerance: if coverage is noise-level, LCB STOP is
+  # skipped (sparse single-centroid GP seeding gives unreliable LCB near the
+  # tolerance boundary).
   lcb_stop_threshold: 0.20
+  # Unknown coverage below this fraction is treated as GT labeling noise:
+  # PROCEED even if the trajectory technically clips an unknown pixel, and skip
+  # LCB STOP (GP seeding is too sparse to be trustworthy at this scale).
+  # Real GOOSE GT maps have 1-5% unlabeled pixels on navigable terrain.
+  # Set to 0.0 to disable (strict mode).
+  path_unknown_tolerance: 0.06
 
 # SAM3 + SAM2 detector settings
 detector:
