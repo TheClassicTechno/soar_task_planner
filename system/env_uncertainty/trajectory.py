@@ -240,16 +240,43 @@ class GoalDirectedTrajectoryGenerator:
         """
         Return three candidate trajectories from start_pixel to goal_pixel.
 
-        The detour paths use a quadratic Bézier curve with a control point
-        offset perpendicular to the start→goal direction by detour_fraction
-        of the total path length. This gives smooth, predictable curvature.
+        All three paths use quadratic Bézier curves ending at goal_pixel.
+        The quadratic Bézier formula is:
+
+            B(t) = (1−t)²·P₀  +  2(1−t)t·P₁  +  t²·P₂,   t ∈ [0, 1]
+
+        where P₀=start, P₂=goal, and P₁ is the control point.
+
+        Control point calculation for detour paths:
+          1. Compute midpoint M = (P₀ + P₂) / 2
+          2. Compute unit direction d̂ = (P₂ − P₀) / ‖P₂ − P₀‖
+          3. Rotate 90°: unit perpendicular n̂ = (−d̂_x, d̂_y)
+          4. Offset: P₁ = M ± (detour_fraction × ‖P₂ − P₀‖) × n̂
+
+        Geometry (image coordinates, y increases downward):
+
+            P₀ (start, bottom-center)
+             |
+             |── direct path (P₁ = M, no offset)
+            / \\
+           /   \\
+          L     R  ← left/right control points at midpoint ± perpendicular offset
+           \\   /
+            \\ /
+             P₂ (goal)
+
+        Note: control points are chosen based on path geometry only, not terrain.
+        If a control point falls over a non-traversable region, the Bézier curve
+        may still pass through it. The GP LCB scoring step (S3) handles this by
+        giving that trajectory a low score — the robot then picks a different path
+        or falls back to ASK if all paths are blocked.
 
         Args:
             start_pixel: (y, x) current robot position in image coordinates.
             goal_pixel:  (y, x) navigation goal in image coordinates.
 
         Returns:
-            List of three unscored Trajectory objects.
+            List of three unscored Trajectory objects: direct, left_detour, right_detour.
         """
         y0, x0 = float(start_pixel[0]), float(start_pixel[1])
         y1, x1 = float(goal_pixel[0]), float(goal_pixel[1])
@@ -257,12 +284,14 @@ class GoalDirectedTrajectoryGenerator:
         mid_y = (y0 + y1) / 2.0
         mid_x = (x0 + x1) / 2.0
 
-        # Unit perpendicular to start→goal (90° counter-clockwise rotation)
+        # Unit direction along start→goal, then rotate 90° CCW for perpendicular.
+        # In image coords (y down, x right): rotate (dy,dx) 90° CCW → (−dx, dy).
         dy, dx = y1 - y0, x1 - x0
         path_length = float(np.sqrt(dy**2 + dx**2)) + 1e-6
-        perp_y = -dx / path_length
-        perp_x = dy / path_length
+        perp_y = -dx / path_length   # perpendicular component in y
+        perp_x = dy / path_length    # perpendicular component in x
 
+        # Lateral offset = detour_fraction × path_length so curvature scales with distance
         offset = self._detour * path_length
         left_ctrl = (mid_y + offset * perp_y, mid_x + offset * perp_x)
         right_ctrl = (mid_y - offset * perp_y, mid_x - offset * perp_x)
@@ -335,7 +364,12 @@ class GoalDirectedTrajectoryGenerator:
         """
         Quadratic Bézier from p0 to p2 via control point p1.
 
-        B(t) = (1-t)² p0 + 2(1-t)t p1 + t² p2,  t ∈ [0, 1]
+            B(t) = (1−t)²·p0  +  2(1−t)t·p1  +  t²·p2,   t ∈ [0, 1]
+
+        At t=0: B=p0 (start).  At t=1: B=p2 (goal).
+        The control point p1 pulls the curve toward it without the curve
+        actually passing through p1 — it is a "magnet" that determines
+        how much the path bends.
         """
         t = np.linspace(0.0, 1.0, self._n)
         ys = (1 - t)**2 * p0[0] + 2 * (1 - t) * t * p1[0] + t**2 * p2[0]
