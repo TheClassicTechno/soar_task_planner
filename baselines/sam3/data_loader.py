@@ -147,6 +147,66 @@ class RUGDSample:
         """Return (H, W) uint8 array of RUGD class IDs, or None if no GT."""
         if self.annotation_path is None or not self.annotation_path.exists():
             return None
+
+        if self.annotation_path.suffix == ".json":
+            # Load Supervisely JSON format (DatasetNinja layout)
+            import json
+            import base64
+            import zlib
+            import io
+
+            with open(self.annotation_path) as f:
+                data = json.load(f)
+
+            height = data["size"]["height"]
+            width = data["size"]["width"]
+            ann = np.zeros((height, width), dtype=np.uint8)
+
+            CLASS_NAME_TO_ID = {
+                "void": 0, "dirt": 1, "sand": 2, "grass": 3, "tree": 4, "pole": 5, "water": 6, "sky": 7,
+                "vehicle": 8, "container/generic-object": 9, "generic-object": 9, "container": 9,
+                "asphalt": 10, "gravel": 11, "building": 12, "mulch": 13, "rock/boulder": 14, "rock-bed": 14,
+                "log": 15, "bicycle": 16, "person": 17, "fence": 18, "bush": 19, "sign": 20, "rock": 21,
+                "bridge": 22, "concrete": 23, "picnic-table": 24, "table": 24
+            }
+
+            for obj in data.get("objects", []):
+                title = obj.get("classTitle", "")
+                geom = obj.get("geometryType", "")
+                class_id = CLASS_NAME_TO_ID.get(title.lower(), 0)
+
+                if geom == "bitmap" and "bitmap" in obj:
+                    origin = obj["bitmap"].get("origin", [0, 0])
+                    origin_x, origin_y = origin[0], origin[1]
+                    base64_data = obj["bitmap"].get("data", "")
+                    if not base64_data:
+                        continue
+
+                    try:
+                        png_bytes = zlib.decompress(base64.b64decode(base64_data))
+                        img = Image.open(io.BytesIO(png_bytes))
+                        img_np = np.array(img)
+                        if img_np.ndim == 3 and img_np.shape[2] == 4:
+                            mask = img_np[:, :, 3] > 0
+                        else:
+                            mask = img_np > 0
+
+                        h_obj, w_obj = mask.shape
+                        y1 = max(0, origin_y)
+                        y2 = min(height, origin_y + h_obj)
+                        x1 = max(0, origin_x)
+                        x2 = min(width, origin_x + w_obj)
+
+                        mask_y1 = y1 - origin_y
+                        mask_y2 = y2 - origin_y
+                        mask_x1 = x1 - origin_x
+                        mask_x2 = x2 - origin_x
+
+                        ann[y1:y2, x1:x2][mask[mask_y1:mask_y2, mask_x1:mask_x2]] = class_id
+                    except Exception:
+                        pass
+            return ann
+
         ann = np.array(Image.open(self.annotation_path))
         if self._ann_is_rgb_color:
             # Official RUGD: RGB color-coded annotations
@@ -179,7 +239,23 @@ def _collect_dataset_tools_samples(data_path: Path, split: str) -> List[RUGDSamp
 
     samples = []
     for img_path in sorted(img_dir.glob("*.png")):
-        ann_path = ann_dir / img_path.name if ann_dir.exists() else None
+        ann_path = None
+        if ann_dir.exists():
+            # Try png first
+            p_png = ann_dir / img_path.name
+            if p_png.exists():
+                ann_path = p_png
+            else:
+                # Try .png.json
+                p_json = ann_dir / (img_path.name + ".json")
+                if p_json.exists():
+                    ann_path = p_json
+                else:
+                    # Try .json
+                    p_json_short = ann_dir / (img_path.stem + ".json")
+                    if p_json_short.exists():
+                        ann_path = p_json_short
+
         samples.append(RUGDSample(img_path, ann_path, ann_is_rgb_color=False))
     return samples
 
