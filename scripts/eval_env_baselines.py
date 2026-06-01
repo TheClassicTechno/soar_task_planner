@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import argparse
 import os
+os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
 import sys
 import time
 from pathlib import Path
@@ -443,17 +444,35 @@ class SimulatedGANav:
         return "PROCEED", None
 
 
+class CachingDetector:
+    """Wrapper that caches the output of detect() to avoid redundant deep network runs."""
+    def __init__(self, actual_detector):
+        self.actual_detector = actual_detector
+        self.cache = {}
+
+    def detect(self, image: np.ndarray):
+        import hashlib
+        import time
+        img_hash = hashlib.md5(image.tobytes()).hexdigest()
+        if img_hash not in self.cache:
+            t_start = time.perf_counter()
+            self.cache[img_hash] = self.actual_detector.detect(image)
+            t_elapsed = time.perf_counter() - t_start
+            print(f"        [Inference] SAM3+SAM2 forward pass took {t_elapsed:.2f}s")
+        return self.cache[img_hash]
+
+
 class OurSystem:
     """Full pipeline: GP LCB + Dirichlet + goal-directed trajectories."""
     name = "our_system"
 
-    def __init__(self, config_path: str, use_real_models: bool = False):
+    def __init__(self, config_path: str, use_real_models: bool = False, device: Optional[str] = None):
         from system.env_uncertainty.runner import EnvironmentalUncertaintyRunner
         from system.env_uncertainty.user_profile import UserProfile
 
         if use_real_models:
             self._runner = EnvironmentalUncertaintyRunner(
-                config_path=config_path, use_real_models=True
+                config_path=config_path, use_real_models=True, device=device
             )
         else:
             class _Det:
@@ -493,7 +512,10 @@ def _eval_baseline(baseline, images: List[Path], use_real_models: bool = False, 
 
     is_cvar = isinstance(baseline, (CVaRPath, CVaRGlobal))
 
-    for img_path in images:
+    for idx, img_path in enumerate(images):
+        if use_real_models:
+            print(f"      [Frame {idx+1}/{len(images)}] Processing {img_path.name}...", flush=True)
+
         img = _load_image(img_path)
         if img is None:
             continue
@@ -545,6 +567,7 @@ def run_comparison(
     threshold: float = 0.60,
     alpha: float = 0.10,
     use_real_models: bool = False,
+    device: Optional[str] = None,
 ) -> None:
     # Resolve dataset path / layout
     rugd_path = Path(os.path.expanduser(os.environ.get("RUGD_DATA_PATH", "~/Documents/datasets/rugd")))
@@ -575,8 +598,12 @@ def run_comparison(
     print(f"  coverage_threshold: {threshold:.0%}   CVaR alpha: {alpha:.0%}")
     print(f"  CVaR thresholds: ask < 0.45, stop < 0.10\n")
 
-    our_sys = OurSystem(config_path=CONFIG_PATH, use_real_models=use_real_models)
-    runner_for_detection = our_sys._runner if use_real_models else None
+    our_sys = OurSystem(config_path=CONFIG_PATH, use_real_models=use_real_models, device=device)
+    if use_real_models:
+        our_sys._runner._detector = CachingDetector(our_sys._runner._detector)
+        runner_for_detection = our_sys._runner
+    else:
+        runner_for_detection = None
 
     baselines = [
         AlwaysProceed(),
@@ -591,11 +618,11 @@ def run_comparison(
 
     rows = []
     for b in baselines:
-        print(f"  Running {b.name} ...", end=" ", flush=True)
+        print(f"  Running {b.name} ...", flush=True)
         result = _eval_baseline(b, images, use_real_models=use_real_models, runner_for_detection=runner_for_detection)
         rows.append(result)
         cvar_str = f"  avg_CVaR={result['avg_cvar']:.3f}" if result["avg_cvar"] is not None else ""
-        print(f"done ({result['avg_ms_per_image']:.0f} ms/img){cvar_str}")
+        print(f"  Done {b.name} ({result['avg_ms_per_image']:.0f} ms/img){cvar_str}\n", flush=True)
 
     # ── Print comparison table ────────────────────────────────────────────────
     W = 90
@@ -659,6 +686,11 @@ def _parse_args() -> argparse.Namespace:
         default=False,
         help="Use real SAM3/SAM2 models instead of color heuristic",
     )
+    p.add_argument(
+        "--device",
+        default=None,
+        help="Device override for PyTorch (e.g. cpu, mps, cuda)",
+    )
     return p.parse_args()
 
 
@@ -670,4 +702,5 @@ if __name__ == "__main__":
         threshold=args.threshold,
         alpha=args.alpha,
         use_real_models=args.use_real_models,
+        device=args.device,
     )

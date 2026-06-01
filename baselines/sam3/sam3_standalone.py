@@ -12,7 +12,7 @@ Prerequisites:
 
 import os
 import time
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import numpy as np
 import yaml
@@ -48,10 +48,11 @@ class SAM3Baseline:
     model runs once per terrain concept query (13 queries → 13 forward passes).
     """
 
-    def __init__(self, config_path: str):
+    def __init__(self, config_path: str, device: Optional[str] = None):
         """
         Args:
             config_path: Path to baselines/sam3/config.yaml
+            device: Optional torch device string override (e.g. "cpu", "mps")
         """
         with open(config_path) as f:
             self._config = yaml.safe_load(f)
@@ -66,7 +67,8 @@ class SAM3Baseline:
             local_model_path = os.path.expanduser(local_model_path)
 
         local_files_only = sam3_cfg.get("local_files_only", False)
-        self._device = _select_device(sam3_cfg.get("device", "auto"))
+        device_str = device if device is not None else sam3_cfg.get("device", "auto")
+        self._device = _select_device(device_str)
 
         if local_model_path and os.path.exists(local_model_path) and os.path.isdir(local_model_path):
             model_id = local_model_path
@@ -80,7 +82,11 @@ class SAM3Baseline:
                 print("       (first run downloads ~3.6 GB to HF cache)")
 
         self._processor = Sam3Processor.from_pretrained(model_id, local_files_only=local_files_only)
-        self._model = Sam3Model.from_pretrained(model_id, local_files_only=local_files_only).to(self._device)
+        self._model = Sam3Model.from_pretrained(
+            model_id, 
+            local_files_only=local_files_only,
+            attn_implementation="eager"
+        ).to(self._device)
         self._model.eval()
         print(f"[SAM3] Ready — {len(self._queries)} terrain concepts")
 
@@ -103,6 +109,8 @@ class SAM3Baseline:
               "scores"           — (N,) float32 np.ndarray
               "inference_time_s" — total wall-clock seconds for all concepts
         """
+        if isinstance(image, np.ndarray):
+            image = Image.fromarray(image.astype(np.uint8))
         if image.mode != "RGB":
             image = image.convert("RGB")
 
@@ -112,6 +120,7 @@ class SAM3Baseline:
         all_scores: List[float] = []
 
         for idx, concept in enumerate(self._queries):
+            print(f"      [SAM3] Query {idx+1}/{len(self._queries)}: '{concept}'...", flush=True)
             inputs = self._processor(
                 images=image, text=concept, return_tensors="pt"
             ).to(self._device)

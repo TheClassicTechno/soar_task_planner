@@ -127,6 +127,7 @@ class EnvironmentalUncertaintyRunner:
         detector: Optional[EnvironmentalUncertaintyDetector] = None,
         llm: Optional[Any] = None,
         use_real_models: bool = False,
+        device: Optional[str] = None,
     ):
         """
         Args:
@@ -134,6 +135,7 @@ class EnvironmentalUncertaintyRunner:
             detector:        Pre-built detector (for testing with mocks).
             llm:             Optional LLMInterface for LLM-mode question generation.
             use_real_models: If True, dynamically loads and uses real SAM2 and SAM3 models.
+            device:          Optional torch device override (e.g., "cpu", "mps", "cuda").
         """
         with open(config_path) as f:
             self._config = yaml.safe_load(f)
@@ -163,11 +165,11 @@ class EnvironmentalUncertaintyRunner:
             from baselines.sam3.sam3_standalone import SAM3Baseline
             from baselines.sam2.sam2_standalone import SAM2Baseline
 
-            print(f"[EnvironmentalUncertaintyRunner] Loading real SAM3 baseline from: {sam3_cfg_path}")
-            sam3_model = SAM3Baseline(config_path=sam3_cfg_path)
+            print(f"[EnvironmentalUncertaintyRunner] Loading real SAM3 baseline from: {sam3_cfg_path} ({device or 'auto'})")
+            sam3_model = SAM3Baseline(config_path=sam3_cfg_path, device=device)
 
-            print(f"[EnvironmentalUncertaintyRunner] Loading real SAM2 baseline from: {sam2_cfg_path}")
-            sam2_model = SAM2Baseline(config_path=sam2_cfg_path)
+            print(f"[EnvironmentalUncertaintyRunner] Loading real SAM2 baseline from: {sam2_cfg_path} ({device or 'auto'})")
+            sam2_model = SAM2Baseline(config_path=sam2_cfg_path, device=device)
 
             det_cfg = self._config.get("detector", {})
             overlap_th = det_cfg.get("overlap_threshold", 0.30)

@@ -146,7 +146,7 @@ def test_init_calls_model_from_pretrained(tmp_path):
     with patch("baselines.sam3.sam3_standalone.Sam3Model", MockModelCls), \
          patch("baselines.sam3.sam3_standalone.Sam3Processor", MockProcCls):
         SAM3Baseline(str(cp))
-    MockModelCls.from_pretrained.assert_called_once_with("test/sam3", local_files_only=False)
+    MockModelCls.from_pretrained.assert_called_once_with("test/sam3", local_files_only=False, attn_implementation="eager")
 
 
 # ── queries property ───────────────────────────────────────────────────────────
@@ -361,7 +361,7 @@ def test_init_with_local_model_path_exists(tmp_path):
         SAM3Baseline(str(cp))
 
     MockProcCls.from_pretrained.assert_called_once_with(str(local_dir), local_files_only=False)
-    MockModelCls.from_pretrained.assert_called_once_with(str(local_dir), local_files_only=False)
+    MockModelCls.from_pretrained.assert_called_once_with(str(local_dir), local_files_only=False, attn_implementation="eager")
 
 
 def test_init_with_local_model_path_missing(tmp_path):
@@ -386,7 +386,7 @@ def test_init_with_local_model_path_missing(tmp_path):
 
     # Should fallback to hf_model_id since local_dir doesn't exist
     MockProcCls.from_pretrained.assert_called_once_with("facebook/sam3-fallback", local_files_only=False)
-    MockModelCls.from_pretrained.assert_called_once_with("facebook/sam3-fallback", local_files_only=False)
+    MockModelCls.from_pretrained.assert_called_once_with("facebook/sam3-fallback", local_files_only=False, attn_implementation="eager")
 
 
 def test_init_passes_local_files_only(tmp_path):
@@ -408,4 +408,4 @@ def test_init_passes_local_files_only(tmp_path):
         SAM3Baseline(str(cp))
 
     MockProcCls.from_pretrained.assert_called_once_with("facebook/sam3", local_files_only=True)
-    MockModelCls.from_pretrained.assert_called_once_with("facebook/sam3", local_files_only=True)
+    MockModelCls.from_pretrained.assert_called_once_with("facebook/sam3", local_files_only=True, attn_implementation="eager")

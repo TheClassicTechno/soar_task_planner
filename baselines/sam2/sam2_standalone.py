@@ -137,6 +137,8 @@ class SAM2Baseline:
               "scores"           — (N,) float32 np.ndarray
               "inference_time_s" — total wall-clock seconds
         """
+        if isinstance(image, np.ndarray):
+            image = Image.fromarray(image.astype(np.uint8))
         if image.mode != "RGB":
             image = image.convert("RGB")
         

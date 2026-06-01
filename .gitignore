@@ -49,3 +49,6 @@ docs/failure_examples.md
 
 # Checkpoints (large binary models)
 checkpoints/
+
+# Scratch directory (temporary diagnostic scripts and local pickle caches)
+scratch/
