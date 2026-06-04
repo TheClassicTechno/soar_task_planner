@@ -418,6 +418,7 @@ class TestScenario5NoRepeatAsk:
         assert d.robot_action == "PROCEED"
 
     def test_should_skip_asking_after_gp_confirmed(self):
+
         # scene_graph.should_skip_asking() returns True once user_confirmed + low GP variance
         sg = SceneGraph()
         node = sg.upsert_region("grass", pixel_y=10, pixel_x=50, height=H, width=W)
@@ -432,3 +433,228 @@ class TestScenario5NoRepeatAsk:
         # gp_variance is 0.0 (< SKIP_VARIANCE_THRESHOLD=0.04) and user_confirmed=True
         assert skip is True
         assert confirmed_node.user_confirmed is True
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SCENARIO: wet_grass_low_lcb — STOP triggered by GP LCB, not unknown coverage
+#
+# Matches scenarios.py Scenario 3 exactly:
+#   - SAM3 identifies terrain as grass (traversability=0.90 base score)
+#   - Prior unsafe feedback has driven terrain_knowledge["grass"] to ~0.03
+#   - _seed_gp_from_detection uses adjusted_traversability → GP seeded with ~0.03
+#   - best_lcb ≈ 0.03 < lcb_stop_threshold (0.20) AND n_observations > 0 → STOP
+#   - unknown_coverage = 0.0 (the terrain is fully known; the risk is traversability)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestScenarioWetGrassLowLcb:
+    """STOP via GP LCB on known terrain after prior wet-condition observations."""
+
+    def _make_grass_detector(self):
+        # 8 equal-height strips covering the full image so the GP is densely seeded.
+        # Without dense coverage, sigma at distant waypoints is ~1.0, making LCB
+        # negative even for safe traversability — masking whether the STOP is LCB-based.
+        # The last strip explicitly extends to H so row 99 (trajectory start) is covered;
+        # otherwise passes_through_unknown=True on all paths, bypassing the LCB check.
+        strips = []
+        for i in range(8):
+            row_start = i * H // 8
+            row_end = (i + 1) * H // 8 if i < 7 else H
+            mask = np.zeros((H, W), dtype=bool)
+            mask[row_start:row_end, :] = True
+            strips.append(_region("grass", mask, traversability=0.90))
+        return _make_detector(strips, [], unknown_coverage=0.0, all_zeros=False)
+
+    def _runner_with_wet_prior(self):
+        # Two confident unsafe observations drive terrain_knowledge["grass"] from
+        # 0.90 → ~0.03, well below the lcb_stop_threshold of 0.20.
+        detector = self._make_grass_detector()
+        runner = _runner(detector)
+        for _ in range(2):
+            runner.terrain_knowledge.update_from_feedback(
+                "grass", is_traversable=False, confidence=0.99
+            )
+        return runner
+
+    def test_stop_triggered_by_low_lcb(self):
+        runner = self._runner_with_wet_prior()
+        d = runner.run_scene(IMAGE)
+        assert d.robot_action == "STOP"
+
+    def test_stop_includes_question(self):
+        runner = self._runner_with_wet_prior()
+        d = runner.run_scene(IMAGE)
+        assert isinstance(d.question, str) and len(d.question) > 5
+
+    def test_stop_not_from_unknown_coverage(self):
+        # The STOP is purely LCB-based: terrain is fully identified, no unknown areas.
+        runner = self._runner_with_wet_prior()
+        d = runner.run_scene(IMAGE)
+        assert d.has_unknown is False
+        assert d.unknown_coverage == pytest.approx(0.0)
+
+    def test_proceed_without_prior_unsafe_observations(self):
+        # Control: without wet-prior feedback, grass trav=0.90 → LCB >> 0.20 → PROCEED.
+        detector = self._make_grass_detector()
+        runner = _runner(detector)
+        d = runner.run_scene(IMAGE)
+        assert d.robot_action == "PROCEED"
+
+    def test_terrain_knowledge_adjusts_traversability_below_threshold(self):
+        # Verify the mechanism: two unsafe feedback calls push adjusted trav below 0.20.
+        detector = self._make_grass_detector()
+        runner = _runner(detector)
+        for _ in range(2):
+            runner.terrain_knowledge.update_from_feedback(
+                "grass", is_traversable=False, confidence=0.99
+            )
+        adjusted = runner.terrain_knowledge.adjusted_traversability("grass")
+        assert adjusted < 0.20
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SCENARIO: mud_or_gravel_ambiguity — ASK triggered by Dirichlet entropy alone
+#
+# Matches scenarios.py Scenario 2 exactly:
+#   - No SAM2-unknown regions: has_unknown=False, unknown_coverage=0.0
+#   - SAM3 labeled the surface but the robot is semantically uncertain (mud vs gravel)
+#   - SceneGraph node at cell (9,5) — traversed by ALL three candidate trajectories
+#   - Node has uniform Dirichlet prior: entropy ≈ log(K) >> entropy_ask_threshold (1.5)
+#   - Runner checks entropy before the PROCEED guard → ASK fires first
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestScenarioMudOrGravelAmbiguity:
+    """ASK via Dirichlet semantic entropy on fully-known terrain (no unknown coverage)."""
+
+    # Cell (9,5) is the bottom of the center column: pixel_y=90, pixel_x=50 maps to
+    # cy=min(9,9)=9, cx=5 for a 100×100 image with GRID_SIZE=10.  All three candidate
+    # trajectories pass through (9,5) because they all start at (99,50).
+    _NODE_PY = 90
+    _NODE_PX = 50
+
+    def _make_gravel_detector(self):
+        step = H // 8
+        strips = []
+        for i in range(8):
+            mask = np.zeros((H, W), dtype=bool)
+            mask[i * step : min((i + 1) * step, H), :] = True
+            strips.append(_region("gravel", mask, traversability=0.70))
+        return _make_detector(strips, [], unknown_coverage=0.0, all_zeros=False)
+
+    def _ambiguous_scene_graph(self):
+        # Fresh node: uniform Dirichlet prior → entropy >> 1.5. No update needed.
+        sg = SceneGraph()
+        sg.upsert_region("gravel", pixel_y=self._NODE_PY, pixel_x=self._NODE_PX,
+                         height=H, width=W)
+        return sg
+
+    def test_ask_triggered_by_dirichlet_entropy(self):
+        detector = self._make_gravel_detector()
+        runner = _runner(detector)
+        sg = self._ambiguous_scene_graph()
+        d = runner.run_scene(IMAGE, scene_graph=sg)
+        assert d.robot_action == "ASK"
+
+    def test_ask_includes_question(self):
+        detector = self._make_gravel_detector()
+        runner = _runner(detector)
+        sg = self._ambiguous_scene_graph()
+        d = runner.run_scene(IMAGE, scene_graph=sg)
+        assert isinstance(d.question, str) and len(d.question) > 5
+
+    def test_ask_not_from_unknown_coverage(self):
+        # The ASK is entropy-based: terrain is fully labeled, coverage is zero.
+        detector = self._make_gravel_detector()
+        runner = _runner(detector)
+        sg = self._ambiguous_scene_graph()
+        d = runner.run_scene(IMAGE, scene_graph=sg)
+        assert d.has_unknown is False
+        assert d.unknown_coverage == pytest.approx(0.0)
+
+    def test_proceed_without_scene_graph(self):
+        # Without a scene graph there are no on-path nodes → no entropy check fires.
+        # Fully known gravel with no unknowns → PROCEED.
+        detector = self._make_gravel_detector()
+        runner = _runner(detector)
+        d = runner.run_scene(IMAGE)  # no scene_graph
+        assert d.robot_action == "PROCEED"
+
+    def test_proceed_after_node_confirmed(self):
+        # After strong Dirichlet update, entropy drops below threshold → no ASK.
+        detector = self._make_gravel_detector()
+        runner = _runner(detector)
+        sg = SceneGraph()
+        node = sg.upsert_region("gravel", pixel_y=self._NODE_PY, pixel_x=self._NODE_PX,
+                                 height=H, width=W)
+        for _ in range(5):
+            node.update_from_user("gravel", confidence=10.0)
+        assert node.semantic_entropy() < 1.5  # confirm precondition
+        d = runner.run_scene(IMAGE, scene_graph=sg)
+        assert d.robot_action == "PROCEED"
+
+    def test_uniform_prior_entropy_above_threshold(self):
+        # Sanity: a fresh node always starts with entropy well above 1.5.
+        sg = SceneGraph()
+        node = sg.upsert_region("gravel", pixel_y=50, pixel_x=50, height=H, width=W)
+        assert node.semantic_entropy() > 1.5
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# New PROCEED scenarios (Scenarios 5 & 6 from scenarios.py)
+# Validates the efficiency claim: robot does NOT over-ask on safe known terrain.
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestNewProceedScenarios:
+    """Scenarios dry_gravel_path and campus_crosswalk must produce PROCEED."""
+
+    def test_dry_gravel_path_is_proceed_scenario(self):
+        from system.env_uncertainty.scenarios import get_scenario
+        s = get_scenario("dry_gravel_path")
+        assert s is not None
+        assert s.expected_action == "PROCEED"
+        assert s.unknown_coverage < 0.06  # noise-level GT labeling (real GT ≈ 3.7%)
+        assert "gravel" in s.terrain_on_path
+
+    def test_campus_crosswalk_is_proceed_scenario(self):
+        from system.env_uncertainty.scenarios import get_scenario
+        s = get_scenario("campus_crosswalk")
+        assert s is not None
+        assert s.expected_action == "PROCEED"
+        assert s.unknown_coverage < 0.06  # noise-level GT labeling (real GT ≈ 5.5%)
+        assert "concrete" in s.terrain_on_path
+
+    def test_proceed_scenario_count_is_at_least_three(self):
+        # Efficiency claim requires ≥3 PROCEED scenarios in the suite.
+        from system.env_uncertainty.scenarios import proceed_scenarios
+        assert len(proceed_scenarios()) >= 3
+
+    def _strips(label: str, trav: float, n: int = 8):
+        # Spread n equal horizontal strips top-to-bottom.
+        # This gives the GP spatial coverage along the full image height,
+        # preventing the cold-start LCB STOP that fires when a single centroid
+        # at (H/2, W/2) is too far from the trajectory start at (H-1, W//2).
+        step = H // n
+        regions = []
+        for i in range(n):
+            mask = np.zeros((H, W), dtype=bool)
+            mask[i * step : min((i + 1) * step, H), :] = True
+            regions.append(_region(label, mask, traversability=trav))
+        return regions
+
+    def test_dry_gravel_path_runner_proceeds_on_all_known_terrain(self):
+        # End-to-end: runner should PROCEED when image is all-known safe terrain.
+        # Use strips so GP is spatially covered along the trajectory.
+        known = TestNewProceedScenarios._strips("gravel", 0.70)
+        detector = _make_detector(known, [], unknown_coverage=0.0, all_zeros=False)
+        runner = _runner(detector)
+        d = runner.run_scene(IMAGE)
+        assert d.robot_action == "PROCEED"
+        assert d.question is None
+
+    def test_campus_crosswalk_runner_proceeds_on_concrete(self):
+        # End-to-end: all-concrete scene with full spatial GP coverage → PROCEED.
+        known = TestNewProceedScenarios._strips("concrete", 0.95)
+        detector = _make_detector(known, [], unknown_coverage=0.0, all_zeros=False)
+        runner = _runner(detector)
+        d = runner.run_scene(IMAGE)
+        assert d.robot_action == "PROCEED"
+        assert d.question is None

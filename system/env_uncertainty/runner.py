@@ -1,13 +1,56 @@
 """
 End-to-end Environmental Uncertainty Runner.
 
-Orchestrates the full pipeline for one scene:
-  1. Detect unknown regions (EnvironmentalUncertaintyDetector)
-  2. Build candidate trajectories (TrajectoryGenerator or GoalDirectedTrajectoryGenerator)
-  3. Score trajectories against traversability map
-  4. Select best trajectory or decide to ASK
-  5. Generate a clarification question if needed
-  6. Apply user feedback and re-score trajectories (run_with_feedback)
+Orchestrates the S1-S5 pipeline for one scene (environmental branch only).
+The instruction branch runs in parallel in joint_decision.py; both branches
+merge at κ_joint = max(κ_I, κ_E).
+
+Per june1meeting.txt (line 10-11): the pipeline is exactly FOUR OR FIVE stages.
+The mentor defined S1-S5 as the authoritative numbering:
+
+S1 — Perception & Segmentation
+     SAM3 labels known terrain (13 classes, e.g. grass/concrete/gravel).
+     SAM2 detects residual unknown regions (<30% overlap with SAM3 output).
+     Output: DetectionResult — segments, labels, masks, confidence, unknown_coverage.
+
+S2 — Scene Understanding & Trajectory
+     (a) GP seeding: initialize GP with one centroid observation per S1 known region.
+         Traversability prior is looked up from the static label→score table.
+         PersistentTerrainKnowledge adjusts these priors using past user feedback.
+     (b) Trajectory generation: 3 goal-directed Bezier curves (left / straight / right).
+         Per may26 meeting (lines 302-309): trajectory generation and LCB scoring are
+         the same conceptual operation — generate all paths then rank by traversability
+         (same as MPPI). Combined into one step.
+     (c) LCB scoring: score each path using GP Lower Confidence Bound (pessimistic).
+         Select the safest trajectory.
+     (d) Scene graph update: build/update TerrainNodes from live S1 detections.
+         Dirichlet α initialized from SAM3 confidence. High-confidence → low entropy.
+     Output: best_trajectory, best_lcb, scene_graph with on-path TerrainNodes.
+
+S3 — Uncertainty Resolution (decision + communication + parse + update score)
+     (a) Decision: PROCEED / ASK / STOP based on coverage, LCB, Dirichlet entropy.
+         · STOP  if coverage ≥ 0.80 OR GP LCB < 0.20 (known dangerous terrain)
+         · ASK   if coverage > 0.10, path crosses unknown, OR Dirichlet entropy > 1.5
+         · PROCEED otherwise
+     (b) Question generation: grounded in top-k Dirichlet candidates from target_node.
+     (c) Response parsing (run_with_feedback): keyword matching → terrain_label,
+         is_traversable, label_confidence (default 0.70 when no keyword found).
+     (d) Score update: GP apply_user_feedback() at uncertain trajectory waypoints
+         and all unknown region pixels. Updates traversability beliefs for this frame.
+     Output: robot_action, question (if ASK/STOP), target_node, parsed_response.
+
+S4 — Node Update (Bayesian update of scene graph, per june1meeting line 10)
+     Dirichlet conjugate update: target_node.update_from_user(label, confidence).
+     α[label] += confidence → lowers semantic_entropy() → robot stops re-asking
+     about the same terrain class.
+     PersistentTerrainKnowledge updated so confirmed labels carry forward to new frames.
+     Output: updated scene_graph nodes, updated PersistentTerrainKnowledge.
+
+S5 — Replan Loop (per june1meeting line 10: "do another round if more uncertainties")
+     Re-run S1-S3 on the same image with updated GP posterior.
+     If path is now safe → PROCEED. If still uncertain → another round of S3-S4.
+     Implemented as a second run_scene() call inside run_with_feedback().
+     Output: new EnvUncertaintyDecision reflecting updated terrain beliefs.
 
 Decision logic:
   - PROCEED: at least one trajectory avoids all unknown regions AND all on-path
@@ -327,27 +370,27 @@ class EnvironmentalUncertaintyRunner:
         image = np.asarray(image)
         h, w = image.shape[:2]
 
-        # Step 1: Detect unknown regions
+        # S1: Perception & Segmentation — SAM3/SAM2 detection
         result: DetectionResult = self._detector.detect(image)
 
-        # Step 4: Seed GP with traversability observations from known regions
+        # S2a: Scene Understanding — seed GP from S1 known regions.
+        # Runs BEFORE trajectory generation so LCB uses the current terrain priors.
+        # User-feedback GP updates happen later in S4 (run_with_feedback), not here.
         self._seed_gp_from_detection(result, h, w)
 
-        # Step 5: Generate and score candidate trajectories
-        # Goal-directed when goal_pixel is supplied; fixed-geometry otherwise.
+        # S2b: Scene Understanding — trajectory generation + LCB scoring (MPPI-style).
+        # Per may26 meeting (lines 302-309): generate all 3 Bezier paths then rank by
+        # GP LCB simultaneously — same conceptual operation as MPPI.
         raw_trajectories = self._generate_trajectories(h, w, goal_pixel)
         scored_trajectories = self._score_trajectories(raw_trajectories, result, h, w, goal_pixel)
 
-        # Select best trajectory using GP LCB (pessimistic safety ranking)
+        # Select best trajectory by GP LCB (pessimistic safety ranking)
         best, best_lcb = self._select_best_trajectory_lcb(scored_trajectories, h, w)
 
-        # S4: Build or update scene graph from live detections.
-        # Calls update_from_gp() so every known region gets a TerrainNode whose
-        # Dirichlet is initialized from SAM3's confidence.  High-confidence regions
-        # (≥0.73) get low entropy → no entropy ASK.  Low-confidence regions stay
-        # high-entropy → correctly trigger ASK via the semantic entropy check in S5.
-        # If the caller supplies a scene_graph (multi-frame tracking), we update it
-        # in-place; otherwise a fresh per-frame graph is used.
+        # S2c: Scene Understanding — build/update scene graph from live detections.
+        # TerrainNode Dirichlet α initialized from SAM3 confidence.
+        # High-confidence regions (≥0.73) → low entropy → no entropy ASK from S3.
+        # If caller provides scene_graph (multi-frame tracking), update it in-place.
         _sg = scene_graph if scene_graph is not None else SceneGraph()
         _sg.update_from_gp(
             gp_map=self._gp_map,
@@ -357,20 +400,21 @@ class EnvironmentalUncertaintyRunner:
             trajectories=scored_trajectories,
         )
 
-        # Resolve on-path scene-graph nodes for Dirichlet entropy check (S5) and
-        # Dirichlet update (S8).  Always non-empty now that the scene graph is built.
+        # Resolve on-path scene-graph nodes for Dirichlet entropy check (S3) and
+        # Dirichlet update (S4).  Always non-empty now that the scene graph is built.
         on_path_nodes: List[TerrainNode] = []
         if best is not None:
             on_path_nodes = self._on_path_nodes(_sg, best, h, w)
 
-        # Step 6: Determine robot action — also returns the target uncertain node
-        # so S8 (run_with_feedback) knows which node's Dirichlet to update.
+        # S3: Uncertainty Resolution — decide action, generate question if needed.
+        # Also identifies target_node (highest-entropy on-path node) so S4
+        # (run_with_feedback) knows exactly which node's Dirichlet to update.
         action, question, target_node = self._decide_action(
             result, scored_trajectories, best, on_path_nodes,
             best_lcb=best_lcb, user_profile=user_profile,
         )
 
-        # Step 10: Transform unknown region centroids to world coordinates
+        # Optional: transform unknown region centroids to world coordinates
         unknown_world_coords = None
         if robot_pose is not None and camera_params is not None and result.unknown_regions:
             unknown_world_coords = self._compute_world_coords(
@@ -500,13 +544,14 @@ class EnvironmentalUncertaintyRunner:
         image_arr = np.asarray(image)
         h, w = image_arr.shape[:2]
 
-        # Step 1: Initial pipeline run
+        # S1-S3: Initial pipeline run (detect → scene understanding → decide/ask)
         initial = self.run_scene(image_arr, scene_id, scene_graph, goal_pixel, user_profile)
 
-        # Step 8: Parse user free-text response → structured output
+        # S3 (parse response): keyword matching → terrain_label, is_traversable,
+        # label_confidence. Default confidence=0.70 when no keyword found (may26 line 374).
         parsed = parse_user_response_rich(user_response)
 
-        # Step 9: GP Bayesian update at uncertain waypoints on the best trajectory.
+        # S4 (GP update): Bayesian update at uncertain waypoints on the best trajectory.
         # Updates only the pixels the robot was actually uncertain about — area-specific,
         # not semantic-category-wide (May 19 mentor: local updates are the right approach).
         #
@@ -554,12 +599,11 @@ class EnvironmentalUncertaintyRunner:
                         width=w,
                     )
 
-        # S8 Dirichlet update: update the specific uncertain node's class distribution.
-        # target_node is the most uncertain on-path TerrainNode that S5 identified —
-        # the node we were asking about. Apply conjugate prior update: alpha[label] +=
-        # label_confidence. This shifts the Dirichlet toward the user-confirmed class,
-        # lowering semantic_entropy() so the robot won't keep asking about the same node.
-        # Only updates when robot was in ASK state and a terrain label was parsed.
+        # S4 (Dirichlet update): update the specific uncertain node's class distribution.
+        # target_node is the highest-entropy on-path TerrainNode from S3.
+        # Conjugate prior update: α[label] += label_confidence.
+        # Lowers semantic_entropy() so the robot won't keep re-asking the same node.
+        # Only fires when robot was in ASK state and a terrain label was parsed.
         if (
             parsed.terrain_label
             and initial.target_node is not None
@@ -578,8 +622,9 @@ class EnvironmentalUncertaintyRunner:
                 confidence=parsed.label_confidence,
             )
 
-        # Step 10: Replan — re-run the full pipeline with updated GP posterior.
-        # The GP now knows the user's safety judgment, so LCB scores will shift.
+        # S5: Replan — re-run S1-S3 with updated GP posterior.
+        # Per june1meeting line 10: "if there is more uncertainties, do another round."
+        # GP now incorporates user's safety judgment, so LCB scores shift accordingly.
         replanned = self.run_scene(image_arr, scene_id + "_replanned", scene_graph, goal_pixel, user_profile)
 
         return initial, replanned
@@ -652,13 +697,13 @@ class EnvironmentalUncertaintyRunner:
         cx = self._cx * scale_x
         cy = self._cy * scale_y
 
-        # Step 1: Detect unknown regions
+        # S1: Perception & Segmentation (SAM3 + SAM2)
         result: DetectionResult = self._detector.detect(image)
 
-        # Step 4a: Seed per-frame GP (for trajectory scoring in image coordinates)
+        # S2a: Scene Understanding — seed per-frame GP from S1 detections
         self._seed_gp_from_detection(result, h, w)
 
-        # Step 4b: Project each known region's mask pixels to world coordinates
+        # S2b: Scene Understanding — project known regions to world coordinates
         #          and add to the world GP. This is the key multi-frame operation:
         #          observations accumulate at real-world (x, y) positions regardless
         #          of which frame they came from.
@@ -684,7 +729,7 @@ class EnvironmentalUncertaintyRunner:
                     gp_mean=trav, gp_variance=0.1,
                 )
 
-        # Step 5: Generate and score trajectories in image coordinates
+        # S2c: Scene Understanding — trajectory generation + LCB scoring (combined MPPI-style)
         raw_trajectories = self._generate_trajectories(h, w, goal_pixel)
         scored_trajectories = self._score_trajectories(raw_trajectories, result, h, w, goal_pixel)
         best, best_lcb = self._select_best_trajectory_lcb(scored_trajectories, h, w)
@@ -704,7 +749,7 @@ class EnvironmentalUncertaintyRunner:
                         if key not in {(n.label, n.position_cell_id) for n in on_path_nodes}:
                             on_path_nodes.append(node)
 
-        # Step 6: Decide action — also returns target uncertain node for S8
+        # S3: Uncertainty Resolution — decide action, returns target_node for S4 update
         action, question, target_node = self._decide_action(
             result, scored_trajectories, best, on_path_nodes,
             best_lcb=best_lcb, user_profile=user_profile,
@@ -849,8 +894,8 @@ class EnvironmentalUncertaintyRunner:
         """
         Add one GP observation per known region, at its mask centroid.
 
-        This runs Step 4 of the pipeline: the GP posterior is updated with
-        SAM3's traversability labels before trajectory LCB scoring (Step 5).
+        This is S2a of the pipeline: the GP posterior is seeded with SAM3's
+        traversability labels before trajectory LCB scoring (S2b).
         Unknown regions are intentionally excluded — the GP only learns from
         regions the robot already has a label for.
 
