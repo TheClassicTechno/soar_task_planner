@@ -194,6 +194,53 @@ class TestNonconformityScore:
             r = self.d.detect(instr)
             assert 0.0 <= r.nonconformity_score <= 1.0
 
+    def test_cooccurrence_boost_raises_p_ambiguous(self):
+        # "Go there" fires both ambiguous_target (p=0.80) and missing_direction.
+        # Co-occurrence boost: +0.05 → p_ambiguous = 0.85 > 0.80 (single-rule baseline).
+        result = self.d.detect("Go there")
+        assert result.ambiguity_type == "ambiguous_target"
+        assert result.p_ambiguous > 0.80
+
+    def test_single_fired_rule_has_no_boost(self):
+        # "Pick it up" fires only missing_object — no co-occurrence boost.
+        result = self.d.detect("Pick it up")
+        assert result.ambiguity_type == "missing_object"
+        assert result.p_ambiguous == pytest.approx(0.75)
+
+    def test_cooccurrence_boost_capped_at_095(self):
+        # Even with many co-occurring signals, p_ambiguous must not exceed 0.95.
+        for instr in ["Go there a bit further", "Go there"]:
+            r = self.d.detect(instr)
+            assert r.p_ambiguous <= 0.95
+
+    def test_existential_vague_boosts_above_directional_pronoun(self):
+        # "somewhere" triggers the _EXISTENTIAL_VAGUE intra-type booster;
+        # "there" does not — so "Head somewhere" should score higher than "Head there".
+        r_somewhere = self.d.detect("Head somewhere")
+        r_there = self.d.detect("Head there")
+        assert r_somewhere.ambiguity_type == "ambiguous_target"
+        assert r_there.ambiguity_type == "ambiguous_target"
+        assert r_somewhere.p_ambiguous > r_there.p_ambiguous
+
+    def test_multiple_vague_distance_phrases_boost_score(self):
+        # Two distinct vague distance matches trigger the intra-type booster → p > 0.70.
+        result = self.d.detect("Move a bit further, just a little ways ahead")
+        assert result.ambiguity_type == "missing_distance"
+        assert result.p_ambiguous > 0.70
+
+    def test_bare_movement_command_boosts_missing_direction(self):
+        # Single-token movement command is maximally underdetermined;
+        # terse-command intra-type booster should raise p above the base 0.70.
+        result = self.d.detect("Go")
+        assert result.ambiguity_type == "missing_direction"
+        assert result.p_ambiguous > 0.70
+
+    def test_per_type_scores_computed_independently(self):
+        # "Handle it a bit further" fires ambiguous_action (w=0.50, p=0.75, κ=0.375)
+        # and missing_distance (w=0.25, p=0.70, κ=0.175); ambiguous_action wins.
+        result = self.d.detect("Handle it a bit further")
+        assert result.ambiguity_type == "ambiguous_action"
+
 
 # ── _compute_nonconformity module-level helper ────────────────────────────────
 
