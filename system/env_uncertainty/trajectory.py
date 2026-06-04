@@ -199,23 +199,25 @@ class GoalDirectedTrajectoryGenerator:
     directions. This class replaces the fixed forward/left_arc/right_arc geometry
     when the robot knows where it wants to go.
 
-    Three path variants via quadratic Bézier curves:
+    Five path variants:
       "direct"        — straight line from start to goal (zero curvature)
-      "left_detour"   — curves left of the direct line, then to goal
-      "right_detour"  — curves right of the direct line, then to goal
+      "left_detour"   — narrow left Bézier detour (detour_fraction offset)
+      "right_detour"  — narrow right Bézier detour (detour_fraction offset)
+      "left_wide"     — wide left Bézier detour (wide_detour_fraction offset)
+      "right_wide"    — wide right Bézier detour (wide_detour_fraction offset)
 
-    The lateral offset for detour paths equals detour_fraction * path_length,
-    so curvature naturally scales with how far away the goal is.
+    Two offset levels improve coverage: if the narrow detours are blocked,
+    the wider ones can still find a clear path around the obstacle.
 
-    All three paths start and end at the same pixels; they only differ in the
-    intermediate waypoints. The runner scores each for traversability uncertainty
-    and picks the safest one.
+    The lateral offset scales with path_length so curvature is consistent
+    regardless of how far away the goal is.
 
     Args:
-        image_height:    Image height in pixels.
-        image_width:     Image width in pixels.
-        n_waypoints:     Waypoints per trajectory (must be >= 2).
-        detour_fraction: Lateral offset as a fraction of path length (default 0.25).
+        image_height:         Image height in pixels.
+        image_width:          Image width in pixels.
+        n_waypoints:          Waypoints per trajectory (must be >= 2).
+        detour_fraction:      Narrow lateral offset as a fraction of path length (default 0.25).
+        wide_detour_fraction: Wide lateral offset as a fraction of path length (default 0.50).
     """
 
     def __init__(
@@ -224,6 +226,7 @@ class GoalDirectedTrajectoryGenerator:
         image_width: int,
         n_waypoints: int = 20,
         detour_fraction: float = 0.25,
+        wide_detour_fraction: float = 0.50,
     ) -> None:
         if n_waypoints < 2:
             raise ValueError("n_waypoints must be at least 2")
@@ -231,6 +234,7 @@ class GoalDirectedTrajectoryGenerator:
         self._w = image_width
         self._n = n_waypoints
         self._detour = detour_fraction
+        self._wide_detour = wide_detour_fraction
 
     def generate_toward_goal(
         self,
@@ -276,7 +280,8 @@ class GoalDirectedTrajectoryGenerator:
             goal_pixel:  (y, x) navigation goal in image coordinates.
 
         Returns:
-            List of three unscored Trajectory objects: direct, left_detour, right_detour.
+            List of five unscored Trajectory objects:
+            direct, left_detour, right_detour, left_wide, right_wide.
         """
         y0, x0 = float(start_pixel[0]), float(start_pixel[1])
         y1, x1 = float(goal_pixel[0]), float(goal_pixel[1])
@@ -291,10 +296,15 @@ class GoalDirectedTrajectoryGenerator:
         perp_y = -dx / path_length   # perpendicular component in y
         perp_x = dy / path_length    # perpendicular component in x
 
-        # Lateral offset = detour_fraction × path_length so curvature scales with distance
-        offset = self._detour * path_length
-        left_ctrl = (mid_y + offset * perp_y, mid_x + offset * perp_x)
-        right_ctrl = (mid_y - offset * perp_y, mid_x - offset * perp_x)
+        # Narrow detours (detour_fraction) + wide detours (wide_detour_fraction)
+        # so the robot can find a clear path even when close-in options are blocked.
+        narrow = self._detour * path_length
+        wide = self._wide_detour * path_length
+
+        left_narrow_ctrl  = (mid_y + narrow * perp_y, mid_x + narrow * perp_x)
+        right_narrow_ctrl = (mid_y - narrow * perp_y, mid_x - narrow * perp_x)
+        left_wide_ctrl    = (mid_y + wide * perp_y,   mid_x + wide * perp_x)
+        right_wide_ctrl   = (mid_y - wide * perp_y,   mid_x - wide * perp_x)
 
         return [
             Trajectory(
@@ -303,11 +313,19 @@ class GoalDirectedTrajectoryGenerator:
             ),
             Trajectory(
                 name="left_detour",
-                waypoints=self._bezier((y0, x0), left_ctrl, (y1, x1)),
+                waypoints=self._bezier((y0, x0), left_narrow_ctrl, (y1, x1)),
             ),
             Trajectory(
                 name="right_detour",
-                waypoints=self._bezier((y0, x0), right_ctrl, (y1, x1)),
+                waypoints=self._bezier((y0, x0), right_narrow_ctrl, (y1, x1)),
+            ),
+            Trajectory(
+                name="left_wide",
+                waypoints=self._bezier((y0, x0), left_wide_ctrl, (y1, x1)),
+            ),
+            Trajectory(
+                name="right_wide",
+                waypoints=self._bezier((y0, x0), right_wide_ctrl, (y1, x1)),
             ),
         ]
 
