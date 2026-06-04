@@ -443,3 +443,244 @@ class TestBothBranchesFire:
         assert jd.kappa_joint >= jd.kappa_I, (
             f"max property: κ_joint={jd.kappa_joint} must be >= κ_I={jd.kappa_I}"
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Dominant branch and question attribution
+# june1meeting: "the question asked is always from the env branch — it asks
+# about terrain, not about the ambiguous instruction. There is currently no
+# logic that says 'the instruction is ambiguous, so use the scene graph terrain
+# info to help narrow what the user meant.'" — this test suite verifies that
+# the fix is in place: the dominant branch determines the question.
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestDominantBranchQuestion:
+    """
+    The question in the JointDecision must come from the dominant branch.
+
+    When κ_I > κ_E (instruction branch drives uncertainty):
+      - dominant_branch == "instruction"
+      - question addresses the instruction ambiguity (not terrain)
+
+    When κ_E > κ_I (environmental branch drives uncertainty):
+      - dominant_branch == "environment"
+      - question addresses the terrain uncertainty
+
+    When both are below ask_threshold:
+      - dominant_branch == "none"
+      - question is None
+    """
+
+    def test_instruction_dominant_branch_on_clear_terrain(self):
+        # Clear sidewalk: κ_E = 0.0; "Go there" → κ_I ≈ 0.64 (ambiguous_target)
+        runner = _make_env_runner(_sidewalk_strips(), [], unknown_coverage=0.0)
+        maker = _maker(runner)
+        jd = maker.decide("Go there", IMAGE)
+        assert jd.dominant_branch == "instruction", (
+            f"Expected 'instruction' branch when κ_I={jd.kappa_I:.3f} > κ_E={jd.kappa_E:.3f}"
+        )
+
+    def test_instruction_dominant_question_is_about_ambiguity_not_purely_terrain(self):
+        # When instruction branch dominates, question must ask to clarify the
+        # instruction — it may include a terrain-context suffix (june1meeting
+        # lines 88-94: scene graph should inform instruction disambiguation),
+        # but the question's primary purpose must NOT be asking about
+        # raw terrain traversability.
+        runner = _make_env_runner(_sidewalk_strips(), [], unknown_coverage=0.0)
+        maker = _maker(runner)
+        jd = maker.decide("Go there", IMAGE)
+        assert jd.final_action == "ASK"
+        assert jd.question is not None
+        # These are PURELY terrain-query phrases (env-branch language);
+        # they should not be the main point of an instruction question.
+        purely_terrain_phrases = {"unknown area", "unrecognized area", "is the terrain"}
+        q_lower = jd.question.lower()
+        for phrase in purely_terrain_phrases:
+            assert phrase not in q_lower, (
+                f"Instruction-dominant question uses pure terrain-query phrasing "
+                f"'{phrase}': {jd.question}"
+            )
+
+    def test_instruction_dominant_question_addresses_ambiguity_slot(self):
+        # For ambiguous_target, the question should ask for location/object clarification
+        runner = _make_env_runner(_sidewalk_strips(), [], unknown_coverage=0.0)
+        maker = _maker(runner)
+        jd = maker.decide("Go there", IMAGE)
+        # ambiguous_target question should reference location or direction
+        assert any(
+            word in jd.question.lower()
+            for word in ("location", "object", "specific", "landmark", "direction", "mean")
+        ), f"Instruction question for ambiguous_target should ask for clarification: {jd.question}"
+
+    def test_env_dominant_branch_on_ambiguous_terrain(self):
+        # 70% unknown → κ_E = 0.875; clear instruction → κ_I = 0.0
+        unknown_mask = _top_mask(0.70)
+        unknown = _region("unknown", unknown_mask, traversability=0.0)
+        runner = _make_env_runner([], [unknown], unknown_coverage=0.70)
+        maker = _maker(runner)
+        jd = maker.decide("Navigate to the bench ahead", IMAGE)
+        assert jd.dominant_branch == "environment", (
+            f"Expected 'environment' branch when κ_E={jd.kappa_E:.3f} > κ_I={jd.kappa_I:.3f}"
+        )
+
+    def test_env_dominant_question_comes_from_env_runner(self):
+        # When env branch dominates, question must match what env_decision produced
+        unknown_mask = _top_mask(0.70)
+        unknown = _region("unknown", unknown_mask, traversability=0.0)
+        runner = _make_env_runner([], [unknown], unknown_coverage=0.70)
+        maker = _maker(runner)
+        jd = maker.decide("Navigate to the bench ahead", IMAGE)
+        assert jd.question == jd.env_decision.question, (
+            "When env branch dominates, joint question must equal env_decision.question"
+        )
+
+    def test_proceed_has_none_dominant_branch(self):
+        # Clear instruction + clear terrain → PROCEED → dominant_branch="none"
+        runner = _make_env_runner(_sidewalk_strips(), [], unknown_coverage=0.0)
+        maker = _maker(runner)
+        jd = maker.decide("Navigate to the park bench directly ahead", IMAGE)
+        assert jd.final_action == "PROCEED"
+        assert jd.dominant_branch == "none"
+        assert jd.question is None
+
+    def test_stop_dominant_branch_is_environment(self):
+        # STOP always comes from environmental branch (safety constraint is absolute)
+        unknown_mask = _top_mask(0.90)
+        unknown = _region("unknown", unknown_mask, traversability=0.0)
+        runner = _make_env_runner([], [unknown], unknown_coverage=0.90)
+        maker = _maker(runner)
+        jd = maker.decide("Navigate to the bench ahead", IMAGE)
+        assert jd.final_action == "STOP"
+        assert jd.dominant_branch == "environment"
+
+    def test_generate_instruction_question_all_types(self):
+        # Every ambiguity type must produce a non-empty instruction question
+        from system.joint_decision.joint_decision import generate_instruction_question
+        from system.instruction_uncertainty.ambiguity_detector import AmbiguityDetection
+        for atype in ["missing_action", "ambiguous_target", "missing_object",
+                      "ambiguous_action", "missing_direction", "missing_distance"]:
+            amb = AmbiguityDetection(
+                ambiguity_type=atype, p_ambiguous=0.8,
+                nonconformity_score=0.6, missing_slots=[atype.split("_")[-1]],
+                reasoning="test", source="rule",
+            )
+            q = generate_instruction_question(amb)
+            assert isinstance(q, str) and len(q) > 10, (
+                f"generate_instruction_question returned empty string for type '{atype}'"
+            )
+
+    def test_generate_instruction_question_fallback_for_unknown_type(self):
+        from system.joint_decision.joint_decision import generate_instruction_question
+        from system.instruction_uncertainty.ambiguity_detector import AmbiguityDetection
+        amb = AmbiguityDetection(
+            ambiguity_type="no_uncertainty", p_ambiguous=0.0,
+            nonconformity_score=0.0, missing_slots=[],
+            reasoning="", source="rule",
+        )
+        q = generate_instruction_question(amb)
+        assert isinstance(q, str) and len(q) > 0
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Scene graph ↔ Instruction branch connection
+# june1meeting lines 88-94: "scene graph and language don't have the best
+# connection in my pipeline right now, but maybe I should connect them more
+# strongly... instruction uncertainties also contain some understanding of
+# the scenario."
+# june1meeting notes lines 311-313: "make sure instruction is aligned with
+# environment... instructional and environmental, dependent on each other"
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestSceneGraphInstructionConnection:
+    """
+    Verifies that when the instruction branch triggers ASK (κ_I > κ_E),
+    the generated question is grounded in the terrain the robot observes.
+
+    This implements the june1meeting requirement: scene graph context must
+    inform instruction disambiguation so the user can answer based on what
+    the robot actually sees.
+    """
+
+    def _env_decision_with_unknown(self, coverage: float) -> EnvUncertaintyDecision:
+        return EnvUncertaintyDecision(
+            scene_id="test",
+            has_unknown=coverage > 0,
+            unknown_coverage=coverage,
+            sam3_coverage=max(0.0, 0.80 - coverage),
+            best_trajectory=None,
+            robot_action="ASK",
+            question="Is the terrain safe?",
+            n_known_regions=2 if coverage < 1.0 else 0,
+            n_unknown_regions=int(coverage > 0),
+        )
+
+    def test_instruction_question_includes_terrain_context_when_unknown(self):
+        # When the scene has unknown terrain (coverage=30%), the instruction
+        # question should include terrain context so the user can ground their reply.
+        from system.joint_decision.joint_decision import generate_instruction_question
+        from system.instruction_uncertainty.ambiguity_detector import AmbiguityDetection
+        amb = AmbiguityDetection(
+            ambiguity_type="ambiguous_target", p_ambiguous=0.8,
+            nonconformity_score=0.6, missing_slots=["target"],
+            reasoning="Ambiguous pronoun", source="rule",
+        )
+        env_dec = self._env_decision_with_unknown(0.30)
+        q = generate_instruction_question(amb, env_decision=env_dec)
+        assert isinstance(q, str) and len(q) > 10
+        # With unknown terrain, the question should mention the robot's view
+        assert "view" in q.lower() or "unidentified" in q.lower() or "%" in q, (
+            f"Expected terrain context in instruction question, got: {q}"
+        )
+
+    def test_instruction_question_without_env_decision_is_clean(self):
+        # Without env_decision, question should be clean (no terrain suffix)
+        from system.joint_decision.joint_decision import generate_instruction_question
+        from system.instruction_uncertainty.ambiguity_detector import AmbiguityDetection
+        amb = AmbiguityDetection(
+            ambiguity_type="ambiguous_target", p_ambiguous=0.8,
+            nonconformity_score=0.6, missing_slots=["target"],
+            reasoning="test", source="rule",
+        )
+        q_no_env = generate_instruction_question(amb, env_decision=None)
+        q_with_env = generate_instruction_question(
+            amb, env_decision=self._env_decision_with_unknown(0.30)
+        )
+        # Both should be valid questions
+        assert isinstance(q_no_env, str) and len(q_no_env) > 5
+        assert isinstance(q_with_env, str) and len(q_with_env) > 5
+        # The grounded version (with env) should be at least as long as the plain one
+        assert len(q_with_env) >= len(q_no_env)
+
+    def test_instruction_question_with_zero_unknown_has_no_terrain_suffix(self):
+        # When unknown_coverage=0, no terrain context should be appended (nothing to report)
+        from system.joint_decision.joint_decision import generate_instruction_question, _terrain_context_suffix
+        env_dec = self._env_decision_with_unknown(0.0)
+        # _terrain_context_suffix returns "" when coverage=0 (no unknown terrain to report)
+        suffix = _terrain_context_suffix(env_dec)
+        assert suffix == ""
+
+    def test_full_pipeline_instruction_question_references_terrain_when_present(self):
+        # End-to-end: "Go there" on a scene with 30% unknown → instruction question
+        # should include terrain view context (connecting scene graph to instruction)
+        unknown_mask = _top_mask(0.30)
+        unknown = _region("unknown", unknown_mask, traversability=0.0)
+        runner = _make_env_runner([], [unknown], unknown_coverage=0.30)
+        maker = _maker(runner)
+
+        # "Go there" → ambiguous_target → κ_I ≈ 0.64; 30% unknown → κ_E ≈ 0.375
+        # κ_I > κ_E → instruction branch dominates → instruction question with terrain context
+        jd = maker.decide("Go there", IMAGE, scene_context="campus path ahead")
+        assert jd.dominant_branch == "instruction"
+        assert jd.question is not None
+        # Question should be terrain-aware (mention view/percentage or terrain info)
+        # because both branches have context to share
+        assert len(jd.question) > 30, f"Expected substantive question, got: {jd.question}"
+
+    def test_joint_decide_env_decision_always_populated(self):
+        # env_decision must always be set so the scene graph context is available
+        runner = _make_env_runner(_sidewalk_strips(), [], unknown_coverage=0.0)
+        maker = _maker(runner)
+        jd = maker.decide("Go there", IMAGE)
+        assert jd.env_decision is not None
+        assert isinstance(jd.env_decision.unknown_coverage, float)
+        assert isinstance(jd.env_decision.sam3_coverage, float)

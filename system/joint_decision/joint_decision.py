@@ -57,7 +57,7 @@ Joint decision vs. independent decisions
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional
 
 from system.env_uncertainty.runner import EnvironmentalUncertaintyRunner, EnvUncertaintyDecision
 from system.instruction_uncertainty.ambiguity_detector import AmbiguityDetection, AmbiguityDetector
@@ -79,6 +79,11 @@ class JointDecision:
     env_decision:            Full EnvUncertaintyDecision from environmental branch.
     final_action:            "PROCEED", "ASK", or "STOP".
     question:                Clarification question if final_action == "ASK" or "STOP".
+                             Comes from the dominant branch:
+                               κ_I > κ_E → instruction clarification question
+                               κ_E >= κ_I → terrain/environment question
+    dominant_branch:         "instruction", "environment", or "none" — identifies
+                             which branch triggered the ASK/STOP.  "none" on PROCEED.
     """
 
     kappa_I: float
@@ -88,6 +93,101 @@ class JointDecision:
     env_decision: EnvUncertaintyDecision
     final_action: str
     question: Optional[str]
+    dominant_branch: str = "none"
+
+
+_INSTRUCTION_QUESTIONS = {
+    "missing_action": (
+        "Could you clarify what action you'd like me to perform? "
+        "I see a navigation environment but no action verb in your command."
+    ),
+    "ambiguous_target": (
+        "Which location or object did you mean? "
+        "Could you describe it more specifically — for example, name a landmark or give a direction?"
+    ),
+    "missing_object": (
+        "What object or destination should I navigate to? "
+        "Your instruction specifies an action but not a clear target."
+    ),
+    "ambiguous_action": (
+        "Could you clarify what you'd like me to do? "
+        "I'm unsure whether you want me to avoid, stop near, or pass through the area ahead."
+    ),
+    "missing_direction": (
+        "Which direction should I go? "
+        "Please specify left, right, straight ahead, or name a visible landmark."
+    ),
+    "missing_distance": (
+        "How far should I travel? "
+        "Could you give a specific distance (e.g., '5 meters') or name a stopping landmark?"
+    ),
+}
+
+
+def _terrain_context_suffix(env_decision: "EnvUncertaintyDecision") -> str:
+    """
+    Build a one-line terrain summary from the environmental branch decision.
+
+    Per june1meeting lines 88–94: the scene graph should inform instruction
+    disambiguation.  This suffix appends what the robot actually sees so the
+    user can ground their answer in the current visual context.
+
+    Only generates a suffix when there is MEANINGFUL uncertainty to report
+    (unknown_coverage > 5%).  When the scene is fully clear, the instruction
+    ambiguity is purely linguistic — no terrain context needed.
+
+    Returns "" when there is nothing informative to add.  Never raises.
+    """
+    try:
+        # Only append terrain context when there's actual environmental uncertainty.
+        # A clear scene (unknown_coverage ≤ 0.05) needs no terrain grounding.
+        if env_decision.unknown_coverage <= 0.05:
+            return ""
+        parts: List[str] = []
+        if env_decision.unknown_coverage > 0.05:
+            parts.append(
+                f"{env_decision.unknown_coverage:.0%} of my view is unidentified terrain"
+            )
+        if not parts:
+            return ""
+        return "(In my current view: " + "; ".join(parts) + ".)"
+    except Exception:
+        return ""
+
+
+def generate_instruction_question(
+    amb: AmbiguityDetection,
+    env_decision: Optional["EnvUncertaintyDecision"] = None,
+) -> str:
+    """
+    Generate a targeted natural-language clarification question for an ambiguous instruction.
+
+    The question is tailored to the detected ambiguity type so the user knows
+    exactly what slot is missing.  When env_decision is supplied (and contains
+    terrain observations), a brief terrain-context suffix is appended so the
+    instruction question is grounded in what the robot actually sees — directly
+    implementing the june1meeting requirement that scene graph and instruction
+    branch must be connected (lines 88–94, notes lines 311–313).
+
+    Args:
+        amb:          AmbiguityDetection from the instruction branch.
+        env_decision: Optional environmental branch output.  When provided, its
+                      terrain summary is appended to the question to connect
+                      scene-graph context to instruction disambiguation.
+
+    Returns:
+        Instruction-focused clarification question string.
+    """
+    base = _INSTRUCTION_QUESTIONS.get(amb.ambiguity_type)
+    if not base:
+        slots_str = ", ".join(amb.missing_slots) if amb.missing_slots else "the instruction"
+        base = f"Could you clarify your instruction? I'm uncertain about: {slots_str}."
+
+    if env_decision is not None:
+        suffix = _terrain_context_suffix(env_decision)
+        if suffix:
+            return f"{base} {suffix}"
+    return base
 
 
 def compute_kappa_E(env_decision: EnvUncertaintyDecision) -> float:
@@ -170,12 +270,28 @@ class JointDecisionMaker:
         if env_decision.robot_action == "STOP" or kappa_joint >= self._stop_threshold:
             final_action = "STOP"
             question = env_decision.question
+            dominant_branch = "environment"
         elif kappa_joint >= self._ask_threshold:
             final_action = "ASK"
-            question = env_decision.question
+            # Per june1meeting design: question comes from the DOMINANT branch.
+            # If the instruction branch is driving uncertainty (κ_I > κ_E and the
+            # instruction is genuinely ambiguous), ask a targeted instruction-clarification
+            # question rather than a terrain question.  This directly resolves the gap
+            # identified in the june1 meeting: "the question asked is always from the
+            # env branch — it asks about terrain, not about the ambiguous instruction."
+            if kappa_I > kappa_E and amb.ambiguity_type != "no_uncertainty":
+                # Pass env_decision so the instruction question is grounded in
+                # the terrain the robot currently observes (june1meeting lines 88-94:
+                # scene graph should connect to and inform instruction branch).
+                question = generate_instruction_question(amb, env_decision=env_decision)
+                dominant_branch = "instruction"
+            else:
+                question = env_decision.question
+                dominant_branch = "environment"
         else:
             final_action = "PROCEED"
             question = None
+            dominant_branch = "none"
 
         return JointDecision(
             kappa_I=kappa_I,
@@ -185,4 +301,5 @@ class JointDecisionMaker:
             env_decision=env_decision,
             final_action=final_action,
             question=question,
+            dominant_branch=dominant_branch,
         )
