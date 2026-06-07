@@ -97,7 +97,7 @@
     },
     "correct_option": "B",
     "reasoning": "Wet grass is a preference-relevant terrain difference, not a safety hazard. The robot has no prior information about this user's willingness to cross wet grass. Asking is the appropriate response to Type 2 environmental uncertainty.",
-    "source_image": null,
+    "source_image": "park-1_00021.png",
     "should_ask": true
   },
   {
@@ -113,7 +113,7 @@
     },
     "correct_option": "B",
     "reasoning": "Loose gravel is manageable for most users but problematic for those with certain mobility devices. The robot does not know this user's preference or needs. Asking resolves the Type 2 terrain uncertainty at low cost.",
-    "source_image": null,
+    "source_image": "trail-7_00036.png",
     "should_ask": true
   },
   {
@@ -129,7 +129,7 @@
     },
     "correct_option": "B",
     "reasoning": "Construction dust affects air quality and may pose a concern for users with respiratory conditions. The robot cannot know this without asking. Type 2 environmental uncertainty requires user input before choosing the route.",
-    "source_image": null,
+    "source_image": "park-2_00056.png",
     "should_ask": true
   },
   {
@@ -145,7 +145,7 @@
     },
     "correct_option": "B",
     "reasoning": "Wet leaves with hidden roots create variable traction and surface uncertainty \u2014 problematic for some mobility devices but fine for others. Without knowing the user's device or preference, asking is the right response to this Type 2 condition.",
-    "source_image": null,
+    "source_image": "trail-3_00018.png",
     "should_ask": true
   },
   {
@@ -161,7 +161,7 @@
     },
     "correct_option": "B",
     "reasoning": "Mud is a mobility device-dependent surface \u2014 passable for some, impassable for others. The robot has no information about this user's preference or equipment. Asking is the correct resolution for Type 2 environmental uncertainty.",
-    "source_image": null,
+    "source_image": "creek_00041.png",
     "should_ask": true
   },
   {
@@ -257,7 +257,7 @@
     },
     "correct_option": "B",
     "reasoning": "The route choice involves different terrain types \u2014 hilly vs. flat paved \u2014 and the robot does not know whether the user can comfortably handle hilly terrain or prefers the flatter surface. This is Type 2 terrain/environmental uncertainty: the robot encounters a terrain-based route fork and must ask before committing.",
-    "source_image": null,
+    "source_image": "trail-9_00029.png",
     "should_ask": true
   },
   {
@@ -273,7 +273,7 @@
     },
     "correct_option": "B",
     "reasoning": "Cobblestone vs. paved covered walkway presents a Type 2 terrain/environmental uncertainty \u2014 the robot sees two different surface types and does not know which the user prefers. Some users find cobblestones difficult with their device; others prefer the shorter outdoor route. Asking before choosing is the correct response.",
-    "source_image": null,
+    "source_image": "park-8_00047.png",
     "should_ask": true
   },
   {
@@ -289,7 +289,7 @@
     },
     "correct_option": "B",
     "reasoning": "The two routes differ in environmental conditions \u2014 crowd density and noise level \u2014 that directly affect navigation comfort. Without knowing the user's preference for a louder vs. quieter environment, this is Type 2 terrain/environmental uncertainty. Asking before choosing is the correct response.",
-    "source_image": null,
+    "source_image": "park-1_00046.png",
     "should_ask": true
   },
   {
@@ -305,7 +305,7 @@
     },
     "correct_option": "B",
     "reasoning": "The ramp's steepness is a terrain feature that may or may not be a barrier depending on the user's mobility situation, which the robot does not know. This is Type 2 terrain/environmental uncertainty \u2014 the robot must ask before committing to either route rather than guessing the user's physical needs.",
-    "source_image": null,
+    "source_image": "park-2_00031.png",
     "should_ask": true
   },
   {
@@ -321,7 +321,7 @@
     },
     "correct_option": "B",
     "reasoning": "Sun exposure vs. shade is a Type 2 terrain/environmental uncertainty \u2014 the environmental conditions of each route differ and user preference is unknown. Some users need shade for medical reasons; others prioritize speed. Using a temperature sensor substitutes a heuristic for the user's actual preference. Asking is the correct response.",
-    "source_image": null,
+    "source_image": "park-8_00011.png",
     "should_ask": true
   },
   {
@@ -436,7 +436,7 @@
     "correct_option": "A",
     "should_ask": false,
     "reasoning": "Smooth dry concrete with no detected hazards is a Type 2 benign terrain observation \u2014 the surface is standard and safe to traverse. The terrain uncertainty is negligible and does not require user input; proceeding directly is the appropriate response.",
-    "source_image": null
+    "source_image": "village_00033.png"
   },
   {
     "entry_id": "nav_t028",
@@ -452,7 +452,7 @@
     "correct_option": "A",
     "should_ask": false,
     "reasoning": "A 3-degree uphill grade on well-maintained asphalt is within standard accessible navigation parameters. This is a Type 2 benign terrain condition \u2014 the surface is safe and the incline is mild enough that user preference is not uncertain; proceeding is correct.",
-    "source_image": null
+    "source_image": "village_00051.png"
   },
   {
     "entry_id": "nav_t029",
@@ -468,7 +468,7 @@
     "correct_option": "A",
     "should_ask": false,
     "reasoning": "A gentle curve on a smooth wide paved path poses no terrain uncertainty requiring user input. This is a Type 2 negligible observation \u2014 the path is safe and navigable at normal speed; asking the user about a standard curve would be unnecessary interruption.",
-    "source_image": null
+    "source_image": "trail-5_00062.png"
   },
   {
     "entry_id": "nav_t030",
@@ -484,7 +484,7 @@
     "correct_option": "A",
     "should_ask": false,
     "reasoning": "Faint decorative pavement markings on a clear wide plaza are a Type 2 benign environmental observation. The terrain is safe and unobstructed; the markings present no navigational hazard or unknown user preference. Proceeding without asking is the correct response.",
-    "source_image": null
+    "source_image": "park-1_00066.png"
   },
   {
     "entry_id": "nav_t031",
