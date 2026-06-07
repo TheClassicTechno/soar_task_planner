@@ -124,6 +124,35 @@ _INSTRUCTION_QUESTIONS = {
 }
 
 
+def _build_terrain_scene_context(env_decision: "EnvUncertaintyDecision") -> str:
+    """
+    Build a concise terrain description from env_decision for the instruction branch.
+
+    This feeds real terrain observations into scene_context so the ambiguity
+    detector's rule-based and LLM paths both see what the robot actually sees —
+    making κ_I terrain-aware rather than purely instruction-text-aware.
+
+    Examples:
+      "Terrain ahead: grass (traversable). Unknown coverage: 0%."
+      "Terrain ahead: unknown terrain (40% of view unidentified). Unknown coverage: 40%."
+    """
+    try:
+        parts = []
+        cov = getattr(env_decision, "unknown_coverage", 0.0)
+        action = getattr(env_decision, "robot_action", "PROCEED")
+
+        if cov > 0.05:
+            parts.append(f"Unknown terrain covers {cov:.0%} of the robot's view.")
+        if action == "STOP":
+            parts.append("Environmental branch determined terrain is unsafe to traverse.")
+        elif action == "ASK" and cov > 0.05:
+            parts.append("Robot is uncertain about terrain ahead.")
+
+        return " ".join(parts) if parts else "Terrain ahead appears clear and traversable."
+    except Exception:
+        return ""
+
+
 def _terrain_context_suffix(env_decision: "EnvUncertaintyDecision") -> str:
     """
     Build a one-line terrain summary from the environmental branch decision.
@@ -248,20 +277,40 @@ class JointDecisionMaker:
         """
         Run both branches and return a joint decision.
 
+        Execution order (june1meeting lines 88-94, june4 integration fix):
+          1. Environmental branch runs FIRST — produces terrain labels and coverage.
+          2. Terrain context is extracted from env_decision and appended to
+             scene_context so the instruction branch sees what the robot sees.
+          3. Instruction branch runs SECOND with the enriched scene_context.
+
+        This makes κ_I terrain-aware: "Keep going" on clear concrete gives a
+        lower κ_I than "Keep going" on 40% unknown terrain, even though the
+        instruction text is identical.  Previously both branches ran in parallel
+        with no cross-talk until the κ-level merge.
+
         Args:
             instruction:    Natural-language instruction from the user.
             image:          RGB image array (H, W, 3).
-            scene_context:  Optional scene description for the instruction branch.
+            scene_context:  Optional caller-supplied scene description.  The
+                            environmental branch output is always appended to this.
             scene_graph:    Optional SceneGraph for the environmental branch.
 
         Returns:
             JointDecision with kappa_I, kappa_E, kappa_joint, and final_action.
         """
-        amb = self._ambiguity_detector.detect(instruction, scene_context)
-        kappa_I = amb.nonconformity_score
-
+        # ── Step 1: Environmental branch first ───────────────────────────────
         env_decision = self._env_runner.run_scene(image, scene_graph=scene_graph)
         kappa_E = compute_kappa_E(env_decision)
+
+        # ── Step 2: Build terrain-enriched scene_context ─────────────────────
+        # Extract detected terrain labels and unknown coverage from env_decision
+        # so the instruction branch can factor in what the robot actually sees.
+        terrain_context = _build_terrain_scene_context(env_decision)
+        enriched_context = f"{scene_context} {terrain_context}".strip() if scene_context else terrain_context
+
+        # ── Step 3: Instruction branch with terrain-enriched context ─────────
+        amb = self._ambiguity_detector.detect(instruction, enriched_context)
+        kappa_I = amb.nonconformity_score
 
         kappa_joint = compute_kappa_joint(kappa_I, kappa_E)
 
