@@ -192,32 +192,29 @@ class TrajectoryGenerator:
 
 class GoalDirectedTrajectoryGenerator:
     """
-    Generates candidate trajectories that all lead toward a specified goal pixel.
+    Generates a fan of candidate trajectories toward a specified goal pixel.
 
-    Per mentor feedback (May 19 meeting): the robot should have a navigation goal
-    and evaluate uncertainty along the path TO that goal — not along arbitrary
-    directions. This class replaces the fixed forward/left_arc/right_arc geometry
-    when the robot knows where it wants to go.
+    Per CRESTE (Shah et al., ICRA 2023) and similar RGB-based navigation work,
+    pre-chosen trajectories must cover the full lateral range so that if ANY
+    traversable corridor exists, at least one trajectory finds it.  CRESTE uses
+    31 constant-curvature arcs; we use a parametric fan of N quadratic Bézier
+    curves with evenly-spaced lateral offsets from -max_offset to +max_offset.
 
-    Five path variants:
-      "direct"        — straight line from start to goal (zero curvature)
-      "left_detour"   — narrow left Bézier detour (detour_fraction offset)
-      "right_detour"  — narrow right Bézier detour (detour_fraction offset)
-      "left_wide"     — wide left Bézier detour (wide_detour_fraction offset)
-      "right_wide"    — wide right Bézier detour (wide_detour_fraction offset)
+    With default n_trajectories=7, max_offset=0.75 the fan covers:
+      right_3 (-0.75), right_2 (-0.50), right_1 (-0.25),
+      direct  ( 0.00),
+      left_1  (+0.25), left_2  (+0.50), left_3  (+0.75)
 
-    Two offset levels improve coverage: if the narrow detours are blocked,
-    the wider ones can still find a clear path around the obstacle.
-
-    The lateral offset scales with path_length so curvature is consistent
-    regardless of how far away the goal is.
+    The lateral offset for each arc = offset_fraction × path_length × n̂, where
+    n̂ is the unit perpendicular to the start→goal direction.  The direct path
+    (offset=0) uses a straight line; all others use quadratic Bézier curves.
 
     Args:
-        image_height:         Image height in pixels.
-        image_width:          Image width in pixels.
-        n_waypoints:          Waypoints per trajectory (must be >= 2).
-        detour_fraction:      Narrow lateral offset as a fraction of path length (default 0.25).
-        wide_detour_fraction: Wide lateral offset as a fraction of path length (default 0.50).
+        image_height:   Image height in pixels.
+        image_width:    Image width in pixels.
+        n_waypoints:    Waypoints per trajectory (must be >= 2, default 20).
+        n_trajectories: Number of fan trajectories (must be odd ≥ 3, default 7).
+        max_offset:     Maximum lateral offset as fraction of path length (default 0.75).
     """
 
     def __init__(
@@ -225,16 +222,18 @@ class GoalDirectedTrajectoryGenerator:
         image_height: int,
         image_width: int,
         n_waypoints: int = 20,
-        detour_fraction: float = 0.25,
-        wide_detour_fraction: float = 0.50,
+        n_trajectories: int = 7,
+        max_offset: float = 0.75,
     ) -> None:
         if n_waypoints < 2:
             raise ValueError("n_waypoints must be at least 2")
+        if n_trajectories < 3 or n_trajectories % 2 == 0:
+            raise ValueError("n_trajectories must be an odd number >= 3")
         self._h = image_height
         self._w = image_width
         self._n = n_waypoints
-        self._detour = detour_fraction
-        self._wide_detour = wide_detour_fraction
+        self._n_traj = n_trajectories
+        self._max_offset = max_offset
 
     def generate_toward_goal(
         self,
@@ -242,46 +241,35 @@ class GoalDirectedTrajectoryGenerator:
         goal_pixel: Tuple[int, int],
     ) -> List[Trajectory]:
         """
-        Return three candidate trajectories from start_pixel to goal_pixel.
+        Return a fan of n_trajectories candidate paths from start_pixel to goal_pixel.
 
-        All three paths use quadratic Bézier curves ending at goal_pixel.
-        The quadratic Bézier formula is:
-
-            B(t) = (1−t)²·P₀  +  2(1−t)t·P₁  +  t²·P₂,   t ∈ [0, 1]
-
-        where P₀=start, P₂=goal, and P₁ is the control point.
-
-        Control point calculation for detour paths:
-          1. Compute midpoint M = (P₀ + P₂) / 2
-          2. Compute unit direction d̂ = (P₂ − P₀) / ‖P₂ − P₀‖
-          3. Rotate 90°: unit perpendicular n̂ = (−d̂_x, d̂_y)
-          4. Offset: P₁ = M ± (detour_fraction × ‖P₂ − P₀‖) × n̂
-
-        Geometry (image coordinates, y increases downward):
+        Fan geometry (n_trajectories=7, max_offset=0.75, image y increases downward):
 
             P₀ (start, bottom-center)
-             |
-             |── direct path (P₁ = M, no offset)
-            / \\
-           /   \\
-          L     R  ← left/right control points at midpoint ± perpendicular offset
-           \\   /
-            \\ /
-             P₂ (goal)
+            |  \\  |  /  |
+           R3  R2 | L2  L3
+             R1   |   L1
+                direct
+                  |
+                 P₂ (goal)
 
-        Note: control points are chosen based on path geometry only, not terrain.
-        If a control point falls over a non-traversable region, the Bézier curve
-        may still pass through it. The GP LCB scoring step (S3) handles this by
-        giving that trajectory a low score — the robot then picks a different path
-        or falls back to ASK if all paths are blocked.
+        Bézier formula for all non-direct paths:
+            B(t) = (1−t)²·P₀  +  2(1−t)t·P₁  +  t²·P₂,   t ∈ [0, 1]
+        where P₁ = M + offset_fraction × path_length × n̂
+              M  = midpoint of P₀→P₂
+              n̂  = unit perpendicular (positive = left, negative = right)
+
+        The direct path (offset=0) uses a straight line for zero curvature.
 
         Args:
             start_pixel: (y, x) current robot position in image coordinates.
             goal_pixel:  (y, x) navigation goal in image coordinates.
 
         Returns:
-            List of five unscored Trajectory objects:
-            direct, left_detour, right_detour, left_wide, right_wide.
+            List of n_trajectories unscored Trajectory objects, ordered from
+            rightmost (most negative offset) to leftmost (most positive offset),
+            with "direct" at center.  Names: right_N, ..., right_1, direct,
+            left_1, ..., left_N  where N = (n_trajectories - 1) // 2.
         """
         y0, x0 = float(start_pixel[0]), float(start_pixel[1])
         y1, x1 = float(goal_pixel[0]), float(goal_pixel[1])
@@ -289,45 +277,40 @@ class GoalDirectedTrajectoryGenerator:
         mid_y = (y0 + y1) / 2.0
         mid_x = (x0 + x1) / 2.0
 
-        # Unit direction along start→goal, then rotate 90° CCW for perpendicular.
+        # Unit perpendicular to start→goal direction.
         # In image coords (y down, x right): rotate (dy,dx) 90° CCW → (−dx, dy).
         dy, dx = y1 - y0, x1 - x0
         path_length = float(np.sqrt(dy**2 + dx**2)) + 1e-6
-        perp_y = -dx / path_length   # perpendicular component in y
-        perp_x = dy / path_length    # perpendicular component in x
+        perp_y = -dx / path_length
+        perp_x = dy / path_length
 
-        # Narrow detours (detour_fraction) + wide detours (wide_detour_fraction)
-        # so the robot can find a clear path even when close-in options are blocked.
-        narrow = self._detour * path_length
-        wide = self._wide_detour * path_length
+        # Evenly-spaced offsets from -max_offset to +max_offset.
+        # Positive = left, negative = right (in image perpendicular convention).
+        offsets = np.linspace(-self._max_offset, self._max_offset, self._n_traj)
+        n_side = (self._n_traj - 1) // 2  # number of arcs on each side
 
-        left_narrow_ctrl  = (mid_y + narrow * perp_y, mid_x + narrow * perp_x)
-        right_narrow_ctrl = (mid_y - narrow * perp_y, mid_x - narrow * perp_x)
-        left_wide_ctrl    = (mid_y + wide * perp_y,   mid_x + wide * perp_x)
-        right_wide_ctrl   = (mid_y - wide * perp_y,   mid_x - wide * perp_x)
+        trajectories = []
+        for offset_frac in offsets:
+            lateral = offset_frac * path_length
+            if abs(offset_frac) < 1e-9:
+                name = "direct"
+                waypoints = self._line(y0, x0, y1, x1)
+            else:
+                ctrl = (
+                    mid_y + lateral * perp_y,
+                    mid_x + lateral * perp_x,
+                )
+                if offset_frac > 0:
+                    # Rank by distance from center: left_1 (closest) … left_N (farthest)
+                    rank = round(offset_frac / self._max_offset * n_side)
+                    name = f"left_{rank}"
+                else:
+                    rank = round(-offset_frac / self._max_offset * n_side)
+                    name = f"right_{rank}"
+                waypoints = self._bezier((y0, x0), ctrl, (y1, x1))
+            trajectories.append(Trajectory(name=name, waypoints=waypoints))
 
-        return [
-            Trajectory(
-                name="direct",
-                waypoints=self._line(y0, x0, y1, x1),
-            ),
-            Trajectory(
-                name="left_detour",
-                waypoints=self._bezier((y0, x0), left_narrow_ctrl, (y1, x1)),
-            ),
-            Trajectory(
-                name="right_detour",
-                waypoints=self._bezier((y0, x0), right_narrow_ctrl, (y1, x1)),
-            ),
-            Trajectory(
-                name="left_wide",
-                waypoints=self._bezier((y0, x0), left_wide_ctrl, (y1, x1)),
-            ),
-            Trajectory(
-                name="right_wide",
-                waypoints=self._bezier((y0, x0), right_wide_ctrl, (y1, x1)),
-            ),
-        ]
+        return trajectories
 
     def score_trajectory(
         self, traj: Trajectory, tmap: TraversabilityMap

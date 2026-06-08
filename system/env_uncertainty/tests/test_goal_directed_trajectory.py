@@ -3,8 +3,8 @@ Unit tests for GoalDirectedTrajectoryGenerator and nav_interface helpers.
 
 Covers:
   GoalDirectedTrajectoryGenerator:
-    - generate_toward_goal returns exactly 5 trajectories
-    - trajectory names are "direct", "left_detour", "right_detour", "left_wide", "right_wide"
+    - generate_toward_goal returns exactly n_trajectories (default 7)
+    - trajectory names follow fan convention: right_N…right_1, direct, left_1…left_N
     - waypoint count matches n_waypoints
     - all waypoints are within image bounds
     - first waypoint is near start_pixel, last is near goal_pixel
@@ -38,8 +38,8 @@ H, W = 120, 160
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
-def _gen(h=H, w=W, n=20, detour=0.25):
-    return GoalDirectedTrajectoryGenerator(h, w, n_waypoints=n, detour_fraction=detour)
+def _gen(h=H, w=W, n=20, n_traj=7, max_offset=0.75):
+    return GoalDirectedTrajectoryGenerator(h, w, n_waypoints=n, n_trajectories=n_traj, max_offset=max_offset)
 
 
 def _all_known_map(h=H, w=W):
@@ -54,17 +54,43 @@ def _all_unknown_map(h=H, w=W):
 
 # ── generate_toward_goal ──────────────────────────────────────────────────────
 
-def test_returns_exactly_five_trajectories():
+def test_returns_n_trajectories_default_seven():
     gen = _gen()
     trajs = gen.generate_toward_goal((H - 1, W // 2), (H // 5, W // 2))
-    assert len(trajs) == 5
+    assert len(trajs) == 7
 
 
-def test_trajectory_names():
-    gen = _gen()
+def test_returns_custom_n_trajectories():
+    gen = _gen(n_traj=9)
+    trajs = gen.generate_toward_goal((H - 1, W // 2), (H // 5, W // 2))
+    assert len(trajs) == 9
+
+
+def test_trajectory_names_fan_convention():
+    gen = _gen()  # 7 trajectories
     trajs = gen.generate_toward_goal((H - 1, W // 2), (H // 5, W // 2))
     names = {t.name for t in trajs}
-    assert names == {"direct", "left_detour", "right_detour", "left_wide", "right_wide"}
+    assert "direct" in names
+    assert "left_1" in names and "left_2" in names and "left_3" in names
+    assert "right_1" in names and "right_2" in names and "right_3" in names
+
+
+def test_direct_is_center_of_fan():
+    gen = _gen()
+    trajs = gen.generate_toward_goal((H - 1, W // 2), (H // 5, W // 2))
+    names = [t.name for t in trajs]
+    center_idx = len(names) // 2
+    assert names[center_idx] == "direct", f"Center of fan should be 'direct', got {names[center_idx]}"
+
+
+def test_invalid_even_n_trajectories_raises():
+    with pytest.raises(ValueError):
+        GoalDirectedTrajectoryGenerator(H, W, n_trajectories=6)
+
+
+def test_invalid_n_trajectories_too_small_raises():
+    with pytest.raises(ValueError):
+        GoalDirectedTrajectoryGenerator(H, W, n_trajectories=1)
 
 
 def test_waypoint_count_matches_n_waypoints():
@@ -117,30 +143,69 @@ def test_direct_path_is_roughly_straight():
     assert abs(mid[1] - expected_mid_x) <= 3
 
 
-def test_detours_have_different_midpoints():
+def test_left_and_right_arcs_have_different_midpoints():
     start = (H - 1, W // 2)
     goal = (0, W // 2)
     gen = _gen(n=21)
     trajs = gen.generate_toward_goal(start, goal)
-    left = next(t for t in trajs if t.name == "left_detour")
-    right = next(t for t in trajs if t.name == "right_detour")
+    left = next(t for t in trajs if t.name == "left_1")
+    right = next(t for t in trajs if t.name == "right_1")
     mid_idx = len(left.waypoints) // 2
-    # Left and right detour midpoints should differ horizontally
     assert left.waypoints[mid_idx] != right.waypoints[mid_idx], (
-        "left_detour and right_detour should curve to different sides"
+        "left_1 and right_1 should curve to opposite sides"
     )
 
 
-def test_detour_paths_are_not_straight():
+def test_non_direct_paths_deviate_from_center():
     start = (H - 1, W // 2)
     goal = (0, W // 2)
-    gen = _gen(n=21, detour=0.30)
+    gen = _gen(n=21, max_offset=0.50)
     trajs = gen.generate_toward_goal(start, goal)
     for traj in (t for t in trajs if t.name != "direct"):
         mid_idx = len(traj.waypoints) // 2
         mid_x = traj.waypoints[mid_idx][1]
-        # With detour_fraction=0.30 the midpoint should visibly deviate from center
         assert abs(mid_x - W // 2) > 2, f"{traj.name} did not deviate from center"
+
+
+def test_fan_finds_safe_arc_when_center_path_blocked():
+    """
+    Item 5.3 validation: if the direct/center path is blocked by an obstacle
+    but the sides are clear, at least one fan arc must find a safe path.
+
+    This is the key correctness guarantee Jing asked for:
+    'if there is any traversable area, you should be able to find it.'
+
+    Design: initialize full grass map (all clear), then place a rectangular
+    obstacle at mid-height center only — so start/end pixels (x=50) are clear
+    but the mid-path center is blocked.  Wide arcs (left_2/right_2+) curve
+    around the obstacle at mid-height.
+    """
+    gen = _gen()  # 7-arc fan, max_offset=0.75
+
+    # Step 1: set entire map to grass (traversable)
+    tmap = TraversabilityMap.create(H, W)
+    full_mask = np.ones((H, W), dtype=bool)
+    tmap = tmap.update_region(full_mask, "grass")
+
+    # Step 2: block a rectangular obstacle at mid-height center.
+    # y=[H//3, 2*H//3] ensures start (y=H-1) and goal (y=H//5) are outside obstacle.
+    # x=[2*W//5, 3*W//5] blocks the center column that direct path travels through.
+    obstacle = np.zeros((H, W), dtype=bool)
+    obstacle[H // 3 : 2 * H // 3, 2 * W // 5 : 3 * W // 5] = True
+    tmap = tmap.update_region(obstacle, "unknown")
+
+    start = (H - 1, W // 2)
+    goal = (H // 5, W // 2)
+    raw = gen.generate_toward_goal(start, goal)
+    scored = [gen.score_trajectory(t, tmap) for t in raw]
+    best = gen.select_best_trajectory(scored)
+
+    assert best is not None, (
+        "Fan should find a safe arc when center is blocked but sides are clear"
+    )
+    assert best.name != "direct", (
+        f"Direct path should be blocked; fan should pick a side arc, got '{best.name}'"
+    )
 
 
 def test_invalid_n_waypoints_raises():
