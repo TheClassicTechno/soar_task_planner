@@ -126,23 +126,39 @@ _INSTRUCTION_QUESTIONS = {
 
 def _build_terrain_scene_context(env_decision: "EnvUncertaintyDecision") -> str:
     """
-    Build a concise terrain description from env_decision for the instruction branch.
+    Build a terrain description from env_decision for the instruction branch.
 
-    This feeds real terrain observations into scene_context so the ambiguity
-    detector's rule-based and LLM paths both see what the robot actually sees —
-    making κ_I terrain-aware rather than purely instruction-text-aware.
+    Includes three kinds of information so the instruction branch (ambiguity
+    detector) can ground language in what the robot actually sees:
 
-    Examples:
-      "Terrain ahead: grass (traversable). Unknown coverage: 0%."
-      "Terrain ahead: unknown terrain (40% of view unidentified). Unknown coverage: 40%."
+    1. Detected terrain label on the path (from target_node.label) — lets the
+       instruction branch recognise when the instruction references a terrain
+       type visible in the scene (e.g. "go through the grass" → grass detected).
+    2. Unknown coverage fraction — signals how uncertain the environment is.
+    3. Action-level warning — tells the detector if terrain is outright dangerous.
+
+    Items 12/14/18 (june1actionitems): this is the scene-graph ↔ language
+    connection.  The target_node label is the most uncertain terrain on the
+    robot's planned path — exactly the terrain the instruction may be referring to.
     """
     try:
         parts = []
         cov = getattr(env_decision, "unknown_coverage", 0.0)
         action = getattr(env_decision, "robot_action", "PROCEED")
+        target_node = getattr(env_decision, "target_node", None)
+
+        # Include the on-path terrain label so instruction grounding can match
+        # "go through the grass" → grass is on the planned path.
+        if target_node is not None:
+            label = getattr(target_node, "label", None)
+            if label and label != "unknown":
+                parts.append(f"Terrain on planned path: {label}.")
+            elif label == "unknown":
+                parts.append("Terrain on planned path is unidentified.")
 
         if cov > 0.05:
             parts.append(f"Unknown terrain covers {cov:.0%} of the robot's view.")
+
         if action == "STOP":
             parts.append("Environmental branch determined terrain is unsafe to traverse.")
         elif action == "ASK" and cov > 0.05:
